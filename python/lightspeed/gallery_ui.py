@@ -10,6 +10,7 @@ from . import qt_utils
 from . import favorites
 
 from . import smart_suggestions
+from . import search_mappings
 
 # Unpack Qt modules for easy access
 QtWidgets = qt_utils.QtWidgets
@@ -40,9 +41,7 @@ class LightspeedGallery(QtWidgets.QDialog):
         self.smart_type = smart_suggestions.get_smart_context(self.selected_nodes)
         self.suggestions = smart_suggestions.get_suggestions(self.smart_type)
         
-        # DEBUG: Print to console to verify logic
-        print(f"Lightspeed Debug: Context={self.current_context_name}, Selection={len(self.selected_nodes)}, SmartType={self.smart_type}")
-        print(f"Lightspeed Debug: Suggestions={self.suggestions}")
+
         
         # 4. UI Build
         self.init_ui()
@@ -59,9 +58,7 @@ class LightspeedGallery(QtWidgets.QDialog):
         self.search_bar.setFocus()
         
     def _capture_context(self):
-        # 0. DEBUG: Check Global Selection immediately
         global_selection = hou.selectedNodes()
-        print(f"Lightspeed Debug: Global hou.selectedNodes() = {[n.name() for n in global_selection]}")
         
         self.network_editor = None
         self.cursor_pos = hou.Vector2(0, 0)
@@ -141,68 +138,9 @@ class LightspeedGallery(QtWidgets.QDialog):
                 
                 self.all_node_types = sorted(valid_types, key=lambda n: n.name())
         except Exception as e:
-            print(f"Lightspeed Data Error: {e}")
+            pass
 
-    def init_ui(self):
-        # --- STYLESHEET (Dark Mode) ---
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2b2b2b;
-                border: 2px solid #444;
-                border-radius: 6px;
-            }
-            QLineEdit {
-                background-color: #1e1e1e;
-                color: #f0f0f0;
-                border: 1px solid #3d3d3d;
-                border-radius: 4px;
-                padding: 6px;
-                font-size: 14px;
-                selection-background-color: #d65d00;
-            }
-            QLabel {
-                color: #888;
-                font-weight: bold;
-                font-size: 11px;
-                margin-top: 8px;
-                margin-bottom: 4px;
-            }
-            QListWidget {
-                background-color: #232323;
-                border: 1px solid #333;
-                border-radius: 4px;
-                outline: 0;
-            }
-            QListWidget::item {
-                color: #cccccc;
-                padding: 6px;
-                border-radius: 3px;
-            }
-            QListWidget::item:selected {
-                background-color: #d65d00;
-                color: white;
-            }
-            QListWidget::item:hover {
-                background-color: #383838;
-            }
-            /* Suggestions Buttons */
-            QPushButton.suggestion-btn {
-                background-color: #333;
-                border: 1px solid #444;
-                border-radius: 3px;
-                color: #eee;
-                padding: 4px 8px;
-                text-align: left;
-            }
-            QPushButton.suggestion-btn:hover {
-                background-color: #444;
-                border-color: #d65d00;
-            }
-        """)
-        
-        layout = QtWidgets.QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(5)
+
         
     def init_ui(self):
         # --- STYLESHEET (Dark Mode) ---
@@ -342,23 +280,40 @@ class LightspeedGallery(QtWidgets.QDialog):
         
         # 1. Standard Filtering
         matches = []
+        matched_names = set()
         for node_type in self.all_node_types:
             name = node_type.name()
             if not search_term or search_term in name.lower():
                 matches.append(node_type)
+                matched_names.add(name)
         
-        # 2. Sorting Logic (Smart Suggestions First)
-        # We want suggested nodes to appear at the top
+        # 2. Alias / Mapping Lookup (C4D -> Houdini terms)
+        alias_names = set()
+        alias_source = {}  # maps houdini_name -> c4d_term that triggered it
+        if search_term:
+            # Build a fast lookup of all node types by name
+            type_map = {t.name(): t for t in self.all_node_types}
+            
+            # Check exact match first, then partial matches on alias keys
+            for alias_key, houdini_names in search_mappings.C4D_MAPPINGS.items():
+                if search_term in alias_key or alias_key in search_term:
+                    for mname in houdini_names:
+                        if mname not in matched_names and mname in type_map:
+                            matches.append(type_map[mname])
+                            matched_names.add(mname)
+                            alias_names.add(mname)
+                            alias_source[mname] = alias_key
+        
+        # 3. Sorting Logic (Alias matches first, then Smart Suggestions, then rest)
         suggested_set = set(self.suggestions) if self.suggestions else set()
         
         def sort_key(node_type):
-            is_suggested = node_type.name() in suggested_set
-            # Sort Key: (Is Suggested? [False comes first so we invert], Name)
-            # We want IsSuggested=True to be first. 
-            # In python sort, False < True (0 < 1). 
-            # So we want (False, "name") for suggestions? No -> (0, "name") < (1, "name")
-            # Actually we want Suggestions first. So we use 'not is_suggested' -> False=0 (is suggested), True=1 (not suggested)
-            return (not is_suggested, node_type.name())
+            name = node_type.name()
+            is_alias = name in alias_names
+            is_suggested = name in suggested_set
+            # Priority: 0 = alias match, 1 = smart suggestion, 2 = normal
+            priority = 0 if is_alias else (1 if is_suggested else 2)
+            return (priority, name)
             
         matches.sort(key=sort_key)
         
@@ -368,17 +323,28 @@ class LightspeedGallery(QtWidgets.QDialog):
         for node_type in displayed_matches:
             icon = self._get_qt_icon(node_type)
             name = node_type.name()
-            item = QtWidgets.QListWidgetItem(icon, name)
+            
+            # Show alias source in the label for mapped results
+            if name in alias_names:
+                display_label = f"{name}  ← {alias_source.get(name, '?')}"
+            else:
+                display_label = name
+            
+            item = QtWidgets.QListWidgetItem(icon, display_label)
             item.setData(QtCore.Qt.UserRole, name)
             
-            # Highlight suggestions visually?
-            if name in suggested_set:
-                # Make text slightly brighter or diff color?
-                # Or just bold
+            # Style alias results (green italic)
+            if name in alias_names:
+                font = item.font()
+                font.setItalic(True)
+                item.setFont(font)
+                item.setForeground(QtGui.QColor("#8bc34a"))
+                item.setToolTip(f"{name} (Houdini) ← \"{alias_source.get(name, '?')}\" (C4D)")
+            # Style smart suggestions (bold blue)
+            elif name in suggested_set:
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)
-                # distinct background color (Dark Slate Blue)
                 item.setBackground(QtGui.QColor("#2d4052")) 
                 item.setForeground(QtGui.QColor("#ffffff"))
                 item.setToolTip(f"{name} (Suggested)")
@@ -428,6 +394,24 @@ class LightspeedGallery(QtWidgets.QDialog):
         make_btn("NULL OUT", self.on_quick_null, "Create OUT Null from last selected")
         make_btn("LAYOUT", self.on_quick_layout, "Auto-layout selected nodes")
         
+        # Delete button — red accent on hover
+        del_btn = make_btn("DELETE", self.on_quick_delete, "Delete selected node(s)")
+        del_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #383838;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 4px 10px;
+                font-weight: bold;
+                color: #ddd;
+            }
+            QPushButton:hover {
+                background-color: #4a2020;
+                border-color: #cc3333;
+                color: #ff6666;
+            }
+        """)
+        
         h_layout.addStretch() # Push to left (or remove to center expand)
         parent_layout.addLayout(h_layout)
 
@@ -452,12 +436,13 @@ class LightspeedGallery(QtWidgets.QDialog):
             merge.setPosition(avg_pos + hou.Vector2(0, -1.5))
             
             merge.setSelected(True, clear_all_selected=True)
+            if self.network_editor is not None:
+                self.network_editor.setCurrentNode(merge)
             merge.setDisplayFlag(True)
             merge.setRenderFlag(True)
             self.close()
-            print(f"Lightspeed: Merged {len(sel)} nodes.")
         except Exception as e:
-            print(f"Merge Error: {e}")
+            pass
 
     def on_quick_null(self):
         if not self.network_editor: return
@@ -485,14 +470,15 @@ class LightspeedGallery(QtWidgets.QDialog):
             null.setPosition(source.position() + hou.Vector2(0, -1.2))
             
             null.setSelected(True, clear_all_selected=True)
+            if self.network_editor is not None:
+                self.network_editor.setCurrentNode(null)
             # Usually OUT nulls are for display/export
             null.setDisplayFlag(True)
             null.setRenderFlag(True)
             
             self.close()
-            print(f"Lightspeed: Created OUT node {null.name()}.")
         except Exception as e:
-            print(f"Null Error: {e}")
+            pass
 
     def on_quick_layout(self):
         if not self.network_editor: return
@@ -514,7 +500,22 @@ class LightspeedGallery(QtWidgets.QDialog):
                 
             self.close() # Close after action?
         except Exception as e:
-            print(f"Layout Error: {e}")
+            pass
+
+    def on_quick_delete(self):
+        """Delete all selected nodes."""
+        sel = self.selected_nodes
+        if not sel:
+            self.close()
+            return
+
+        try:
+            for node in sel:
+                node.destroy()
+        except Exception as e:
+            pass
+
+        self.close()
 
     # --- INTERACTION & CREATION ---
 
@@ -644,17 +645,20 @@ class LightspeedGallery(QtWidgets.QDialog):
             # --- SELECTION & FLAGS ---
             new_node.setSelected(True, clear_all_selected=True)
             
+            # Drive the Parameter Editor to show the new node
+            if self.network_editor is not None:
+                self.network_editor.setCurrentNode(new_node)
+            
             if hasattr(new_node, "setDisplayFlag"):
                 new_node.setDisplayFlag(True)
             
             if hasattr(new_node, "setRenderFlag"):
                 new_node.setRenderFlag(True)
             
-            print(f"Lightspeed: Created {new_node.path()}")
+
             
         except Exception as e:
-            print(f"Lightspeed Creation Error: {e}")
-            # No popup, just console logic
+            pass
         
         self.close()
             
