@@ -32,6 +32,19 @@ except NameError:
 if _repo not in sys.path:
     sys.path.insert(0, _repo)
 
+# -- Clean up stale hooks from old hotkey approach --------------------------
+try:
+    import nodegraphhooks
+    if hasattr(nodegraphhooks, 'createEventHandler'):
+        fn = nodegraphhooks.createEventHandler
+        if hasattr(fn, '_is_lightspeed_hook') or \
+           (hasattr(fn, '__module__') and fn.__module__ and 'lightspeed' in fn.__module__):
+            del nodegraphhooks.createEventHandler
+except Exception:
+    pass
+
 # -- Launch ------------------------------------------------------------------
-from lightspeed.lightspeed_startup import show_lightspeed
-show_lightspeed()
+import importlib
+import lightspeed.lightspeed_startup as _ls
+importlib.reload(_ls)
+_ls.show_lightspeed()

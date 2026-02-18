@@ -434,6 +434,10 @@ C4D_MAPPINGS = {
     "slice modifier":   ["clip"],
     "xform":            ["transform"],
     "gizmo":            ["transform", "null"],
+    "transform":        ["xform", "transform"], # Standard Houdini name mapping
+    "geometry":         ["geo"],                # Standard Houdini name mapping
+    "geo":              ["geo"],
+    "copernicus":       ["copnet", "cop2net"],  # H21 features
 }
 
 

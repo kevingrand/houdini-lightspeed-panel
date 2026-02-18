@@ -262,15 +262,23 @@ class LightspeedGallery(QtWidgets.QDialog):
         
         for name in fav_names:
             node_type = type_map.get(name)
+            
+            # Truncate label if > 4 chars (e.g. "sphere" -> "sphe..")
+            # The full name is shown in the tooltip.
+            display_name = name
+            if len(name) > 4:
+                display_name = name[:4] + ".."
+            
             if node_type:
                 icon = self._get_qt_icon(node_type)
-                item = QtWidgets.QListWidgetItem(icon, name)
+                item = QtWidgets.QListWidgetItem(icon, display_name)
                 item.setToolTip(name)
                 # Ensure we store the cleanup name just in case
                 item.setData(QtCore.Qt.UserRole, name)
                 self.fav_list.addItem(item)
             else:
-                item = QtWidgets.QListWidgetItem(name)
+                item = QtWidgets.QListWidgetItem(display_name)
+                item.setToolTip(name)
                 item.setData(QtCore.Qt.UserRole, name)
                 self.fav_list.addItem(item)
 
@@ -278,12 +286,15 @@ class LightspeedGallery(QtWidgets.QDialog):
         self.results_list.clear()
         search_term = text.lower().strip()
         
-        # 1. Standard Filtering
+        # 1. Standard Filtering (Name AND Label/Description)
         matches = []
         matched_names = set()
         for node_type in self.all_node_types:
             name = node_type.name()
-            if not search_term or search_term in name.lower():
+            label = node_type.description()
+            
+            # Search in both internal name and human-readable label
+            if not search_term or search_term in name.lower() or search_term in label.lower():
                 matches.append(node_type)
                 matched_names.add(name)
         
@@ -328,7 +339,13 @@ class LightspeedGallery(QtWidgets.QDialog):
             if name in alias_names:
                 display_label = f"{name}  ← {alias_source.get(name, '?')}"
             else:
-                display_label = name
+                # Provide useful context: "Label (internal_name)"
+                # This helps users find "Transform" when the node is actually "xform"
+                label = node_type.description()
+                if label and label.lower() != name.lower():
+                    display_label = f"{label} ({name})"
+                else:
+                    display_label = name
             
             item = QtWidgets.QListWidgetItem(icon, display_label)
             item.setData(QtCore.Qt.UserRole, name)

@@ -11,31 +11,61 @@ import hou
 SMART_MAP = {
     # Base Geo
     "geo": ["file", "object_merge", "null"],
-    "box": ["transform", "groupcreate", "color", "null", "labs::axis_align", "matchsize", "polyextrude", "polybevel"],
-    "sphere": ["transform", "null", "matchsize", "polybevel"],
-    "tube": ["transform", "polycap", "polybevel"],
-    "grid": ["mountain", "polyextrude", "uvptexture"],
-    "torus": ["transform"],
+    "box": ["xform", "polybevel", "polyextrude", "clip", "mirror", "remesh", "normal", "null", "matchsize", "labs::axis_align"],
+    "sphere": ["xform", "polybevel", "clip", "mirror", "remesh", "normal", "null", "matchsize"],
+    "tube": ["xform", "polycap", "polybevel", "clip", "mirror", "remesh", "normal", "null"],
+    "grid": ["xform", "mountain", "polyextrude", "uvptexture", "scatter", "null"],
+    "torus": ["xform", "polybevel", "null"],
     
     # Curves
-    "curve": ["resample", "sweep", "carve", "polywire", "labs::curve_branches"],
-    "line": ["resample", "sweep", "copytopoints"],
-    "drawcurve": ["resample", "sweep"],
+    "curve": ["resample", "sweep", "carve", "polywire", "labs::curve_branches", "xform", "null", "rigdoctor"],
+    "line": ["resample", "sweep", "copytopoints", "xform", "null", "rigdoctor"],
+    "drawcurve": ["resample", "sweep", "xform", "null", "rigdoctor"],
     
     # Attributes/VEX
-    "attribwrangle": ["attribpromote", "attribcopy", "blast", "grouppromote", "null"],
+    "attribwrangle": ["attribpromote", "attribcopy", "blast", "grouppromote", "null", "filecache"],
     "attribcreate": ["attribwrangle", "null"],
+    "attribrandomize": ["copytopoints", "null"],
+    "scatter": ["copytopoints", "attribrandomize", "attribnoise", "null"],
+    "copytopoints": ["filecache", "null", "merge"],
     
     # Volumes
-    "vdbfrompolygons": ["vdbreshape", "vdbsmooth", "vdbcombine", "convertvdb"],
-    "isooffset": ["convert", "vdbfrompolygons"],
+    "vdbfrompolygons": ["vdbreshape", "vdbsmooth", "vdbcombine", "convertvdb", "filecache"],
+    "isooffset": ["convert", "vdbfrompolygons", "filecache"],
     
     # Common SOPs
-    "transform": ["null", "merge", "copytopoints"],
-    "merge": ["null", "output"],
-    "file": ["null", "unpack", "convert"],
-    "object_merge": ["transform", "null"],
-    "null": ["merge", "output"]
+    "xform": ["null", "merge", "copytopoints", "mirror", "clip"],
+    "transform": ["null", "merge", "copytopoints"], # Keep just in case
+    "merge": ["null", "output", "filecache"],
+    "file": ["null", "unpack", "convert", "xform"],
+    "object_merge": ["xform", "null", "blast"],
+    "null": ["merge", "output", "xform"],
+    "boolean": ["remesh", "normal", "null"],
+    
+    # Simulation
+    "dopnet": ["filecache", "null"],
+    "popnet": ["filecache", "null"],
+    "vellumsolver": ["filecache", "null"],
+
+    # KineFX / Rigging / APEX
+    "resample": ["rigdoctor", "orientjoints", "rigvisualize", "null"],
+    "rigdoctor": ["rigpose", "skeletonblend", "ikchains", "kinefx::fbik", "jointcapturebiharmonic", "visualize"],
+    "skeleton": ["rigdoctor", "rigpose", "apex::packcharacter", "apex::autorigcomponent"],
+    
+    # IK & Constraints
+    "ikchains": ["rigpose", "skeletonblend", "null"],
+    "kinefx::fbik": ["rigpose", "null"],
+    "configurejoints": ["kinefx::fbik", "null"],
+    
+    # Skinning
+    "jointcapturebiharmonic": ["bonedeform", "deltamush", "null"],
+    "capturegeoproximity": ["bonedeform", "null"],
+    "bonedeform": ["null"],
+    "rigpose": ["jointcapturebiharmonic", "bonedeform", "kinefx::motionmixer", "skeletonblend"],
+    
+    # APEX (H21)
+    "apex::autorigcomponent": ["apex::sceneanimate", "null"],
+    "apex::sceneanimate": ["null"],
 }
 
 def get_suggestions(node_type_name):
