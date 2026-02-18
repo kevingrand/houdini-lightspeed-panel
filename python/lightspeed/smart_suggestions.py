@@ -71,10 +71,49 @@ SMART_MAP = {
 def get_suggestions(node_type_name):
     """
     Returns a list of suggested node type names for a given input node type.
+    Handles versioned/namespaced nodes (e.g. 'curve::2.0' -> 'curve').
     """
     if not node_type_name:
         return []
-    return SMART_MAP.get(node_type_name.lower(), [])
+    
+    name = node_type_name.lower()
+    
+    # 1. Try exact match first
+    suggestions = SMART_MAP.get(name)
+    if suggestions:
+        return suggestions
+        
+    # 2. Robust Namespace/Version Stripping
+    if "::" in name:
+        parts = name.split("::")
+        
+        # Common patterns:
+        # "node::2.0" -> parts=["node", "2.0"] -> want "node"
+        # "namespace::node" -> parts=["namespace", "node"] -> want "node"
+        # "namespace::node::2.0" -> parts=["namespace", "node", "2.0"] -> want "node"
+        
+        potential_keys = []
+        
+        # A) Last part (if not version)
+        if not parts[-1].replace('.', '').isdigit():
+            potential_keys.append(parts[-1])
+            
+        # B) Second to last part (if last is version)
+        if len(parts) > 1:
+            # If last part IS a version, take the one before it
+            if parts[-1].replace('.', '').isdigit():
+                potential_keys.append(parts[-2])
+                
+        # C) First part (fallback for "curve::2.0")
+        potential_keys.append(parts[0])
+        
+        # Try all potential keys in order
+        for key in potential_keys:
+            suggestions = SMART_MAP.get(key)
+            if suggestions:
+                return suggestions
+
+    return []
 
 def get_smart_context(selected_nodes):
     """

@@ -286,87 +286,140 @@ class LightspeedGallery(QtWidgets.QDialog):
         self.results_list.clear()
         search_term = text.lower().strip()
         
+        # Helper to strip namespaces (e.g. kinefx::rigdoctor -> rigdoctor, curve::2.0 -> curve)
+        def get_base_name(full_name):
+            if "::" in full_name:
+                parts = full_name.split("::")
+                # If last part is version, take 2nd to last, else take last
+                if parts[-1].replace('.', '').isdigit() and len(parts) > 1:
+                    return parts[-2]
+                return parts[-1] 
+            return full_name
+
         # 1. Standard Filtering (Name AND Label/Description)
+        # We collect tuples of (node_type, match_type_score)
+        # Scores: 0=Exact, 1=StartsWith, 2=Contains
         matches = []
         matched_names = set()
+        
         for node_type in self.all_node_types:
             name = node_type.name()
             label = node_type.description()
+            base_name = get_base_name(name)
             
-            # Search in both internal name and human-readable label
-            if not search_term or search_term in name.lower() or search_term in label.lower():
-                matches.append(node_type)
+            name_lower = name.lower()
+            label_lower = label.lower()
+            
+            score = 100 # Default no match
+            
+            if not search_term:
+                score = 5 # Just show everything
+            elif search_term == name_lower or search_term == label_lower or search_term == base_name.lower():
+                score = 0 # Exact Match
+            elif name_lower.startswith(search_term) or label_lower.startswith(search_term) or base_name.lower().startswith(search_term):
+                score = 1 # Starts With
+            elif search_term in name_lower or search_term in label_lower:
+                score = 2 # Contains
+            
+            if score < 100:
+                matches.append((node_type, score))
                 matched_names.add(name)
         
         # 2. Alias / Mapping Lookup (C4D -> Houdini terms)
-        alias_names = set()
-        alias_source = {}  # maps houdini_name -> c4d_term that triggered it
+        alias_source = {}  # maps houdini_name -> c4d_term
         if search_term:
-            # Build a fast lookup of all node types by name
             type_map = {t.name(): t for t in self.all_node_types}
-            
-            # Check exact match first, then partial matches on alias keys
             for alias_key, houdini_names in search_mappings.C4D_MAPPINGS.items():
                 if search_term in alias_key or alias_key in search_term:
                     for mname in houdini_names:
                         if mname not in matched_names and mname in type_map:
-                            matches.append(type_map[mname])
+                            matches.append((type_map[mname], 3)) # Score 3 for Alias
                             matched_names.add(mname)
-                            alias_names.add(mname)
                             alias_source[mname] = alias_key
         
-        # 3. Sorting Logic (Alias matches first, then Smart Suggestions, then rest)
+        # 3. Sorting Logic
+        # Suggestions get a boost. 
+        # But EXACT matches should usually beat suggestions? 
+        # Actually user wants "Line" to show up first if they type "Line".
+        # So Exact Match > Suggestion ? Or Suggestion > Exact Match?
+        # If I type "Line", and "Line" is a suggestion, it wins double.
+        # If I type "Line", and "Line" is NOT a suggestion, it should still be top.
+        
         suggested_set = set(self.suggestions) if self.suggestions else set()
         
-        def sort_key(node_type):
+        def sort_key(item):
+            node_type, score = item
             name = node_type.name()
-            is_alias = name in alias_names
-            is_suggested = name in suggested_set
-            # Priority: 0 = alias match, 1 = smart suggestion, 2 = normal
-            priority = 0 if is_alias else (1 if is_suggested else 2)
-            return (priority, name)
+            base_name = get_base_name(name)
             
+            # Check if suggested (robustly)
+            is_suggested = (name in suggested_set) or (base_name in suggested_set)
+            
+            # Primary Sort: Score (Exact=0, StartsWith=1, Contains=2, Alias=3)
+            # Secondary Sort: Suggestion (-1 if suggested, 0 if not) - gives boost within same score tier? 
+            # actually, if we want suggestions to float to top when NO search, 
+            # but Exact Match to win when SEARCHING.
+            
+            # If searching:
+            if search_term:
+                # Priority: 
+                # 1. Exact Match (Score 0)
+                # 2. Starts With (Score 1) + Suggested
+                # 3. Starts With (Score 1)
+                # 4. Alias (Score 3)
+                # 5. Contains (Score 2) - wait alias is better than arbitrary contains? Unsure.
+                
+                # Let's simple tuple sort:
+                # (Score, NotSuggested, NameLength)
+                # Lower score is better. 
+                # If tied on score, Suggested (True) is better than NotSuggested (False).
+                
+                return (score, not is_suggested, len(name), name)
+            else:
+                # If NOT searching (empty text):
+                # Suggestions FIRST.
+                return (not is_suggested, name)
+
         matches.sort(key=sort_key)
-        
-        # Limit results 
+
+        # 4. Populate List (limit to top 100)
         displayed_matches = matches[:100]
         
-        for node_type in displayed_matches:
-            icon = self._get_qt_icon(node_type)
+        for node_type, score in displayed_matches:
             name = node_type.name()
+            base_name = get_base_name(name)
+            is_suggested = (name in suggested_set) or (base_name in suggested_set)
             
-            # Show alias source in the label for mapped results
-            if name in alias_names:
-                display_label = f"{name}  ← {alias_source.get(name, '?')}"
-            else:
-                # Provide useful context: "Label (internal_name)"
-                # This helps users find "Transform" when the node is actually "xform"
-                label = node_type.description()
-                if label and label.lower() != name.lower():
-                    display_label = f"{label} ({name})"
-                else:
-                    display_label = name
+            # Label
+            text = f"{node_type.description()} ({name})"
             
-            item = QtWidgets.QListWidgetItem(icon, display_label)
-            item.setData(QtCore.Qt.UserRole, name)
+            # Icon
+            try:
+                icon = hou.qt.createIcon(node_type.icon())
+            except:
+                icon = QtGui.QIcon()
             
-            # Style alias results (green italic)
-            if name in alias_names:
-                font = item.font()
-                font.setItalic(True)
-                item.setFont(font)
-                item.setForeground(QtGui.QColor("#8bc34a"))
-                item.setToolTip(f"{name} (Houdini) ← \"{alias_source.get(name, '?')}\" (C4D)")
-            # Style smart suggestions (bold blue)
-            elif name in suggested_set:
-                font = item.font()
+            item_widget = QtWidgets.QListWidgetItem(icon, text)
+            item_widget.setData(QtCore.Qt.UserRole, node_type.name())
+            
+            # Highlight Suggestions
+            if is_suggested:
+                # Blue-ish bold text for suggestions
+                font = item_widget.font()
                 font.setBold(True)
-                item.setFont(font)
-                item.setBackground(QtGui.QColor("#2d4052")) 
-                item.setForeground(QtGui.QColor("#ffffff"))
-                item.setToolTip(f"{name} (Suggested)")
+                item_widget.setFont(font)
+                item_widget.setBackground(QtGui.QBrush(QtGui.QColor("#2d4052"))) 
+                item_widget.setForeground(QtGui.QBrush(QtGui.QColor("#ffffff")))
+                item_widget.setToolTip(f"{name} (Suggested)")
+            
+            # Show Alias source if applicable
+            if score == 3 and name in alias_source:
+                original_term = alias_source[name]
+                item_widget.setText(f"{text}  [Matches '{original_term}']")
+                item_widget.setForeground(QtGui.QBrush(QtGui.QColor("#e6b44f"))) # Gold
+                item_widget.setToolTip(f"{name} matches '{original_term}'")
                 
-            self.results_list.addItem(item)
+            self.results_list.addItem(item_widget)
             
         if len(matches) > 100:
             info = QtWidgets.QListWidgetItem(f"... and {len(matches) - 100} more")
