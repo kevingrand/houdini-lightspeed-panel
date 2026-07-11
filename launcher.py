@@ -22,6 +22,7 @@ HOTKEY SETUP (optional)
 
 import sys
 import os
+import importlib
 
 # -- Ensure the package is on sys.path --------------------------------------
 try:
@@ -43,8 +44,26 @@ try:
 except Exception:
     pass
 
+# -- Reload the whole package (dependency order) so edits take effect -------
+import lightspeed
+import lightspeed.qt
+import lightspeed.store
+import lightspeed.fuzzy
+import lightspeed.aliases
+import lightspeed.node_index
+import lightspeed.suggestions
+import lightspeed.favorites
+import lightspeed.panel
+import lightspeed.lightspeed_startup
+
+for _mod in (lightspeed.qt, lightspeed.store, lightspeed.fuzzy,
+             lightspeed.aliases, lightspeed.node_index, lightspeed.suggestions,
+             lightspeed.favorites, lightspeed.panel,
+             lightspeed.lightspeed_startup, lightspeed):
+    importlib.reload(_mod)
+
+# Reloading node_index resets the class attribute, so the index rebuilds
+# lazily on next open — that's intended (picks up newly installed HDAs).
+
 # -- Launch ------------------------------------------------------------------
-import importlib
-import lightspeed.lightspeed_startup as _ls
-importlib.reload(_ls)
-_ls.show_lightspeed()
+lightspeed.lightspeed_startup.show_lightspeed()

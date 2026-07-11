@@ -1,15 +1,12 @@
 """
 lightspeed_startup.py
----------------
-Minimal entry point for the Lightspeed Panel.
+---------------------
+Entry point for the Lightspeed Panel.
 Call show_lightspeed() from a shelf tool, hotkey, or script.
+(Module name kept from v1 so existing shelf tools keep working.)
 """
 
-import hou
-from . import qt_utils
-from .gallery_ui import LightspeedGallery
-
-QtWidgets = qt_utils.QtWidgets
+from .panel import LightspeedPanel
 
 # ---------------------------------------------------------------------------
 #  Singleton window reference
@@ -30,5 +27,7 @@ def show_lightspeed():
             pass
         _instance = None
 
-    _instance = LightspeedGallery(parent=hou.ui.mainQtWindow())
+    import hou
+    _instance = LightspeedPanel(parent=hou.ui.mainQtWindow())
     _instance.show()
+    return _instance

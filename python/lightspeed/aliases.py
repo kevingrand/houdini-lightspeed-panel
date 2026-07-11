@@ -1,18 +1,21 @@
-
 """
-search_mappings.py
-------------------
+aliases.py
+----------
 Maps terminology from other 3D software (Cinema 4D, Blender, Maya, 3ds Max)
-to Houdini node types. This allows users to search using familiar terms
-from their previous software and find the correct Houdini equivalent.
+and common VFX vocabulary to Houdini node types, so users can search with
+familiar terms and find the Houdini equivalent.
 
-e.g. "Cube" → "Box", "Cloner" → "copytopoints", "Lattice" → "lattice"
+e.g. "Cube" → "Box", "Cloner" → "copytopoints", "Keyer" → "chromakey"
+
+Values are *base* node names (namespace/version stripped). The panel resolves
+them against whatever category it is currently showing, so "wrangle" maps to
+attribwrangle in SOPs and to the Copernicus wrangle in COPs when present.
 """
 
 # Key = Search Term (lowercase)
-# Value = List of Houdini Node Type Names (lowercase) to suggest
+# Value = List of Houdini base node names (lowercase) to suggest
 
-C4D_MAPPINGS = {
+ALIASES = {
 
     # ─────────────────────────────────────────────────────────
     # PRIMITIVES & GENERATORS
@@ -438,13 +441,87 @@ C4D_MAPPINGS = {
     "geometry":         ["geo"],                # Standard Houdini name mapping
     "geo":              ["geo"],
     "copernicus":       ["copnet", "cop2net"],  # H21 features
+
+    # ─────────────────────────────────────────────────────────
+    # COMPOSITING / COPERNICUS TERMS (Nuke, AE, Substance)
+    # ─────────────────────────────────────────────────────────
+    "keyer":            ["chromakey"],
+    "keying":           ["chromakey"],
+    "green screen":     ["chromakey"],
+    "levels":           ["colorcorrect", "equalize"],
+    "curves tool":      ["colorcorrect", "remap"],
+    "color correction": ["colorcorrect"],
+    "grade":            ["colorcorrect", "bright", "contrast"],
+    "exposure":         ["bright"],
+    "saturation":       ["hsv", "colorcorrect"],
+    "hue":              ["hsv"],
+    "denoise":          ["denoiseai", "denoisetvd"],
+    "roto":             ["maskfromcurves", "rasterizecurves"],
+    "matte":            ["idtomask", "chromakey"],
+    "grain":            ["fractalnoise", "randommono"],
+    "noise texture":    ["fractalnoise", "worleynoise", "phasornoise"],
+    "voronoi noise":    ["worleynoise"],
+    "cellular noise":   ["worleynoise"],
+    "transform 2d":     ["xform2d", "xform"],
+    "corner pin":       ["cornerpin"],
+    "lens blur":        ["bokeh", "defocus"],
+    "motion blur":      ["streakblur"],
+    "unpremult":        ["premult"],
+    "merge comp":       ["layer", "blend"],
+    "over":             ["layer", "blend"],
+    "screen blend":     ["layer", "blend"],
+    "normal map":       ["heighttonormal", "convertnormal"],
+    "ambient occlusion": ["heighttoambientocclusion"],
+    "height map":       ["heighttonormal", "heightfield"],
+    "sdf":              ["sdfshape", "monotosdf", "idtosdf"],
+    "machine learning": ["onnx", "denoiseai"],
+    "ml":               ["onnx"],
+
+    # ─────────────────────────────────────────────────────────
+    # SOLARIS / USD TERMS
+    # ─────────────────────────────────────────────────────────
+    "usd import":       ["sceneimport", "sopimport", "reference"],
+    "usd export":       ["usd_rop", "usdrender_rop"],
+    "render settings usd": ["karmarendersettings", "rendersettings"],
+    "look dev":         ["materiallibrary", "assignmaterial"],
+    "shot":             ["shotload", "shotoutput"],
 }
+
+# Backwards-compatible name (pre-overhaul scripts imported C4D_MAPPINGS)
+C4D_MAPPINGS = ALIASES
 
 
 def get_mapped_nodes(search_query):
     """
-    Returns a list of Houdini node types associated with the search query.
+    Returns a list of Houdini base node names for an exact alias term.
     Checking is case-insensitive.
     """
     query = search_query.lower().strip()
-    return C4D_MAPPINGS.get(query, [])
+    return ALIASES.get(query, [])
+
+
+def alias_hits_for_query(query):
+    """
+    Fuzzy alias lookup for the search panel.
+
+    Returns {base_node_name: alias_term} for every alias term that matches
+    the query (exact, prefix, or containment for terms of 3+ chars).
+    """
+    query = query.lower().strip()
+    if len(query) < 2:
+        return {}
+
+    hits = {}
+    for term, node_names in ALIASES.items():
+        matched = (
+            term == query
+            or term.startswith(query)
+            or (len(query) >= 3 and query in term)
+            or (len(term) >= 3 and term in query)
+        )
+        if not matched:
+            continue
+        for node_name in node_names:
+            # First (best) alias term wins for a given node
+            hits.setdefault(node_name, term)
+    return hits
