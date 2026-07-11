@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <!-- Dockable Lightspeed: the same panel, persistent in a pane tab.
+       Install: Windows > Python Panel Editor > File > Load File... and pick
+       this file (or copy it into $HOUDINI_USER_PREF_DIR/python_panels/).
+       Then add a "Lightspeed" pane tab via the pane tab menu > Misc >
+       Lightspeed. -->
+  <interface name="lightspeed" label="Lightspeed" icon="MISC_python" showNetworkNavigationBar="false">
+    <script><![CDATA[
+def onCreateInterface():
+    try:
+        from lightspeed.lightspeed_startup import create_embedded_panel
+    except ImportError:
+        # The repo's python/ dir isn't on sys.path yet in this session.
+        from hutil.Qt import QtWidgets
+        label = QtWidgets.QLabel(
+            "Lightspeed isn't on the Python path yet.\n\n"
+            "Run the Lightspeed shelf tool once (it adds the repo to "
+            "sys.path),\nthen close and reopen this pane tab.\n\n"
+            "For a permanent fix, add <repo>/python to HOUDINI_PYTHONPATH."
+        )
+        label.setWordWrap(True)
+        label.setMargin(20)
+        return label
+    return create_embedded_panel()
+]]></script>
+    <includeInPaneTabMenu menu_position="105" create_separator="false"/>
+    <includeInToolbarMenu menu_position="105" create_separator="false"/>
+  </interface>
+</pythonPanelDocument>

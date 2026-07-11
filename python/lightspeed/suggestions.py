@@ -128,6 +128,17 @@ CURATED = {
         "null": ["rop_image", "layer", "output"],
         "cryptomatte": ["idtomask", "layer"],
         "idtomask": ["dilateerode", "layer"],
+
+        # H21 additions (flow solver, scatter shapes, cables, text, video…)
+        # — names resolve against the live index, unknown ones are skipped.
+        "flowsolver": ["blur", "colorcorrect", "layer", "null"],
+        "scattershapes": ["layer", "blur", "colorcorrect", "null"],
+        "reactiondiffusion": ["remap", "colorcorrect", "layer"],
+        "grungemap": ["layer", "remap", "colorcorrect"],
+        "cables": ["layer", "colorcorrect", "null"],
+        "text": ["blur", "xform2d", "layer", "null"],
+        "video": ["colorcorrect", "layer", "null"],
+        "bubblenoise": ["remap", "colorcorrect", "layer"],
     },
 
     # Solaris
@@ -215,7 +226,8 @@ POPULAR = {
             "copytopoints", "box", "grid", "sphere", "filecache", "groupcreate",
             "polyextrude", "remesh", "resample", "boolean"],
     "Cop": ["file", "sopimport", "blur", "colorcorrect", "layer", "fractalnoise",
-            "remap", "xform2d", "heighttonormal", "wrangle", "rop_image", "null"],
+            "phasornoise", "flowsolver", "scattershapes", "remap", "xform2d",
+            "heighttonormal", "wrangle", "rop_image", "null"],
     "Lop": ["sopimport", "materiallibrary", "assignmaterial", "camera",
             "domelight", "karmarendersettings", "usdrender_rop", "merge",
             "xform", "reference", "null"],

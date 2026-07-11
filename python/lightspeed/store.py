@@ -13,6 +13,10 @@ import json
 import os
 import tempfile
 
+# Shared settings file name — read by the panel (gear menu) and by
+# nodegraphhooks.py (TAB hook), so it lives here, not in either consumer.
+SETTINGS_FILE = "lightspeed_settings.json"
+
 
 def _pref_dir():
     import hou

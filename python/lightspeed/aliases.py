@@ -55,15 +55,16 @@ ALIASES = {
     "n-side":           ["circle"],
     "cogwheel":         ["circle"],
     "rectangle":        ["curve"],
-    "text":             ["font"],
-    "motext":           ["font"],
+    "text":             ["font", "text"],
+    "motext":           ["font", "text"],
     "formula spline":   ["curve"],
 
     # ─────────────────────────────────────────────────────────
     # MOGRAPH / INSTANCING / SCATTERING
     # ─────────────────────────────────────────────────────────
-    "cloner":           ["copytopoints", "copyandtransform"],
-    "clone":            ["copytopoints", "copyandtransform"],
+    "cloner":           ["copytopoints", "copyandtransform", "instancer"],
+    "clone":            ["copytopoints", "copyandtransform", "instancer"],
+    "mograph":          ["copytopoints", "scatter", "instancer"],
     "instance":         ["instance", "copytopoints"],
     "array":            ["copyandtransform"],
     "linear array":     ["copyandtransform"],
@@ -80,14 +81,19 @@ ALIASES = {
     # ─────────────────────────────────────────────────────────
     # MOGRAPH EFFECTORS
     # ─────────────────────────────────────────────────────────
-    "effector":         ["attribwrangle", "attribrandomize"],
-    "plain effector":   ["transform", "attribwrangle"],
-    "random effector":  ["attribrandomize"],
-    "shader effector":  ["attribfrommap"],
-    "delay effector":   ["timeshift", "trail"],
+    # MOPs base names (instancer, falloff, transform_modifier, …) are listed
+    # alongside the vanilla-Houdini answer; they only resolve — and only show
+    # up — when the MOPs toolkit is actually installed.
+    "effector":         ["attribwrangle", "attribrandomize", "falloff"],
+    "plain effector":   ["transform", "attribwrangle", "transform_modifier"],
+    "random effector":  ["attribrandomize", "randomize_modifier", "randomize"],
+    "shader effector":  ["attribfrommap", "falloff_from_texture"],
+    "delay effector":   ["timeshift", "trail", "delay_modifier"],
+    "falloff":          ["falloff_from_shape", "falloff_from_texture",
+                         "falloff", "attribpaint"],
     "formula effector": ["attribwrangle"],
     "step effector":    ["attribwrangle", "sort"],
-    "target effector":  ["lookat"],
+    "target effector":  ["lookat", "aim_modifier"],
     "spline effector":  ["pathdeform"],
     "sound effector":   ["chop", "chopnet"],
     "time effector":    ["attribwrangle"],
@@ -478,6 +484,54 @@ ALIASES = {
     "ml":               ["onnx"],
 
     # ─────────────────────────────────────────────────────────
+    # AFTER EFFECTS TERMS (motion design vocabulary)
+    # ─────────────────────────────────────────────────────────
+    "fractal noise":    ["fractalnoise", "phasornoise", "attribnoise"],
+    "turbulent noise":  ["fractalnoise", "phasornoise"],
+    "turbulent displace": ["distort", "displace", "mountain"],
+    "displacement map": ["displace", "distort", "heighttonormal"],
+    "wiggle":           ["attribnoise", "noise", "jitter"],
+    "echo":             ["trail", "timeblend"],
+    "glow":             ["bloom", "glow"],
+    "tint":             ["tint", "colorcorrect", "hueshift"],
+    "curves":           ["remap", "colorcorrect"],
+    "hue saturation":   ["hsv", "colorcorrect"],
+    "drop shadow":      ["dropshadow", "shadow"],
+    "gaussian blur":    ["blur"],
+    "directional blur": ["streakblur", "blur"],
+    "radial blur":      ["radialblur", "streakblur"],
+    "vignette":         ["vignette"],
+    "chromatic aberration": ["chromaticaberration", "lensdistort"],
+    "lens distortion":  ["lensdistort"],
+    "posterize":        ["quantize", "posterize"],
+    "threshold":        ["threshold", "clamp"],
+    "invert":           ["invert", "reverse"],
+    "solid":            ["constant", "color"],
+    "adjustment layer": ["colorcorrect"],
+    "precomp":          ["subnet", "null"],
+    "time remap":       ["timeshift", "retime"],
+    "speed ramp":       ["retime", "timeshift"],
+    "luma key":         ["lumakey", "chromakey"],
+    "track matte":      ["layer", "premult", "idtomask"],
+    "stroke":           ["trace", "rasterizecurves", "polywire"],
+
+    # ─────────────────────────────────────────────────────────
+    # HOUDINI 21 COPERNICUS / MOGRAPH TERMS
+    # ─────────────────────────────────────────────────────────
+    "flow":             ["flowsolver", "flow"],
+    "fluid 2d":         ["flowsolver"],
+    "smoke 2d":         ["flowsolver", "pyrosolver"],
+    "reaction diffusion": ["reactiondiffusion"],
+    "scatter stamps":   ["scattershapes"],
+    "stamp":            ["scattershapes", "copytopoints"],
+    "grunge":           ["grungemap", "grunge"],
+    "live video":       ["video", "livevideo", "webcam"],
+    "phasor":           ["phasornoise"],
+    "bubble noise":     ["bubblenoise"],
+    "cables":           ["cables"],
+    "braid":            ["cables"],
+
+    # ─────────────────────────────────────────────────────────
     # SOLARIS / USD TERMS
     # ─────────────────────────────────────────────────────────
     "usd import":       ["sceneimport", "sopimport", "reference"],
@@ -491,6 +545,25 @@ ALIASES = {
 C4D_MAPPINGS = ALIASES
 
 
+class AliasHit(object):
+    """One alias match: the term that matched and how well it matched.
+
+    tier: 0 = exact term ("cloner" == "cloner")
+          1 = prefix / word-boundary prefix ("clon", "plain eff")
+          2 = containment either way
+          3 = ordered subsequence (typo tolerance, e.g. "clner")
+    """
+
+    __slots__ = ("term", "tier")
+
+    def __init__(self, term, tier):
+        self.term = term
+        self.tier = tier
+
+    def __repr__(self):
+        return "AliasHit(%r, %d)" % (self.term, self.tier)
+
+
 def get_mapped_nodes(search_query):
     """
     Returns a list of Houdini base node names for an exact alias term.
@@ -500,12 +573,37 @@ def get_mapped_nodes(search_query):
     return ALIASES.get(query, [])
 
 
+def _match_tier(term, query):
+    """How well does an alias term match the query? None when it doesn't."""
+    if term == query:
+        return 0
+    if term.startswith(query):
+        return 1
+    # word-boundary prefix: "effector" matches "plain effector"
+    if any(word.startswith(query) for word in term.split()):
+        return 1
+    if len(query) >= 3 and query in term:
+        return 2
+    if len(term) >= 3 and term in query:
+        return 2
+    # Typo tolerance: ordered subsequence for queries of 5+ chars
+    # ("clner" -> "cloner"), gap-limited so it stays meaningful. Short
+    # queries are excluded: "cone" is a subsequence of "cloner" and must
+    # NOT drag clone nodes into a primitive search.
+    if len(query) >= 5:
+        from . import fuzzy
+        sub = fuzzy.subsequence_positions(query, term)
+        if sub is not None and sub[1] <= 2:
+            return 3
+    return None
+
+
 def alias_hits_for_query(query):
     """
     Fuzzy alias lookup for the search panel.
 
-    Returns {base_node_name: alias_term} for every alias term that matches
-    the query (exact, prefix, or containment for terms of 3+ chars).
+    Returns {base_node_name: AliasHit} for every alias term matching the
+    query. When several terms map to the same node, the best tier wins.
     """
     query = query.lower().strip()
     if len(query) < 2:
@@ -513,15 +611,11 @@ def alias_hits_for_query(query):
 
     hits = {}
     for term, node_names in ALIASES.items():
-        matched = (
-            term == query
-            or term.startswith(query)
-            or (len(query) >= 3 and query in term)
-            or (len(term) >= 3 and term in query)
-        )
-        if not matched:
+        tier = _match_tier(term, query)
+        if tier is None:
             continue
         for node_name in node_names:
-            # First (best) alias term wins for a given node
-            hits.setdefault(node_name, term)
+            current = hits.get(node_name)
+            if current is None or tier < current.tier:
+                hits[node_name] = AliasHit(term, tier)
     return hits

@@ -133,22 +133,42 @@ def score(query, name, label):
     return total, sorted(set(all_positions))
 
 
+# Score assigned per alias-match tier (see aliases.AliasHit). An exact alias
+# term ("cloner") must beat every partial direct match — the alias IS the
+# user's word for the node — while looser alias matches slot between
+# word-prefix matches and subsequence noise.
+ALIAS_TIER_SCORES = {0: 0.3, 1: 3.5, 2: 6.5, 3: 7.0}
+
+
+def _alias_lookup(alias_hits):
+    """Normalize {name: AliasHit|term} to a lowercase-keyed dict."""
+    return {key.lower(): value for key, value in alias_hits.items()}
+
+
+def _alias_parts(hit):
+    """(term, score) from an AliasHit, tolerating plain-string values."""
+    term = getattr(hit, "term", hit)
+    tier = getattr(hit, "tier", 2)
+    return term, ALIAS_TIER_SCORES.get(tier, 6.5)
+
+
 def rank(entries, query, alias_hits=None, suggested=(), favorites=(), limit=60):
     """
     Rank index entries against a query.
 
     entries    : iterable with .name, .label, .base attributes
     query      : raw user text
-    alias_hits : {base_or_full_name: alias_term} — entries matched via a
-                 cross-DCC alias (e.g. 'cloner'); given tier-8 score if they
-                 didn't already match directly.
+    alias_hits : {base_or_full_name: AliasHit (or plain term string)} —
+                 entries matched via a cross-DCC alias (e.g. 'cloner').
+                 Matched case-insensitively against base and full names, so
+                 namespaced HDA toolkits (MOPs::Instancer) resolve too.
     suggested  : set of base names that are contextual suggestions (boost)
     favorites  : set of full names that are favorites (small boost)
 
     Returns list of dicts:
       {entry, score, positions, alias} sorted best-first, capped at limit.
     """
-    alias_hits = alias_hits or {}
+    alias_hits = _alias_lookup(alias_hits) if alias_hits else {}
     suggested = set(suggested)
     favorites = set(favorites)
     query = query.strip()
@@ -156,16 +176,19 @@ def rank(entries, query, alias_hits=None, suggested=(), favorites=(), limit=60):
     results = []
     for entry in entries:
         s, positions = score(query, entry.name, entry.label)
+        hit = None
+        if alias_hits:
+            hit = (alias_hits.get(entry.base.lower())
+                   or alias_hits.get(entry.name.lower()))
         alias_term = None
-        if s is None:
-            alias_term = alias_hits.get(entry.base) or alias_hits.get(entry.name)
-            if alias_term is None:
-                continue
-            s, positions = 8.0, []
-        elif entry.base in alias_hits or entry.name in alias_hits:
-            # Direct match that is *also* an alias hit: keep direct score,
-            # still show the alias origin note.
-            alias_term = alias_hits.get(entry.base) or alias_hits.get(entry.name)
+        if hit is not None:
+            alias_term, alias_score = _alias_parts(hit)
+            # The alias score can only help: an exact alias term outranks a
+            # weak direct match, but a strong direct match keeps its score.
+            s = alias_score if s is None else min(s, alias_score)
+            positions = positions or []
+        elif s is None:
+            continue
 
         if entry.base in suggested:
             s -= 0.4

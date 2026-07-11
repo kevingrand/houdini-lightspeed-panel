@@ -95,11 +95,46 @@ check("rank 'box' -> box first", ranked and ranked[0]["entry"].name == "box",
 from lightspeed import aliases
 hits = aliases.alias_hits_for_query("cloner")
 check("alias cloner -> copytopoints", "copytopoints" in hits, hits)
+check("exact alias term is tier 0", hits["copytopoints"].tier == 0,
+      hits["copytopoints"])
 ranked = fuzzy.rank(idx.entries("Sop"), "cloner", alias_hits=hits)
 names = [r["entry"].base for r in ranked]
 check("rank alias cloner returns copytopoints", "copytopoints" in names, names[:5])
+check("exact alias cloner ranks FIRST", ranked[0]["entry"].base == "copytopoints",
+      names[:5])
 alias_row = next(r for r in ranked if r["entry"].base == "copytopoints")
 check("alias term attached", alias_row["alias"] == "cloner", alias_row["alias"])
+
+# alias prefix + typo tolerance
+hits_prefix = aliases.alias_hits_for_query("clon")
+check("alias prefix clon matches", "copytopoints" in hits_prefix
+      and hits_prefix["copytopoints"].tier == 1, hits_prefix.get("copytopoints"))
+hits_typo = aliases.alias_hits_for_query("clner")
+check("alias typo clner matches", "copytopoints" in hits_typo,
+      hits_typo.get("copytopoints"))
+ranked_typo = fuzzy.rank(idx.entries("Sop"), "clner", alias_hits=hits_typo)
+check("typo alias still surfaces copytopoints",
+      any(r["entry"].base == "copytopoints" for r in ranked_typo),
+      [r["entry"].base for r in ranked_typo][:5])
+
+# AE vocabulary
+hits_ae = aliases.alias_hits_for_query("wiggle")
+check("AE alias wiggle -> attribnoise", "attribnoise" in hits_ae, hits_ae)
+ranked_ae = fuzzy.rank(idx.entries("Sop"), "wiggle", alias_hits=hits_ae)
+check("wiggle surfaces attribnoise",
+      any(r["entry"].base == "attribnoise" for r in ranked_ae),
+      [r["entry"].base for r in ranked_ae][:5])
+
+# case-insensitive alias resolution (namespaced HDA toolkits like MOPs)
+class _FakeEntry(object):
+    def __init__(self, name, label, base):
+        self.name, self.label, self.base = name, label, base
+_fake = [_FakeEntry("MOPs::Instancer", "MOPs Instancer", "Instancer")]
+ranked_mops = fuzzy.rank(_fake, "cloner",
+                         alias_hits=aliases.alias_hits_for_query("cloner"))
+check("case-insensitive alias resolves MOPs::Instancer",
+      len(ranked_mops) == 1 and ranked_mops[0]["alias"] == "cloner",
+      ranked_mops)
 
 ranked = fuzzy.rank(idx.entries("Cop"), "keyer",
                     alias_hits=aliases.alias_hits_for_query("keyer"))
@@ -133,6 +168,8 @@ from lightspeed import suggestions as sug
 engine = sug.SuggestionEngine()
 cold = engine.suggestions("Sop", "box")
 check("curated: box -> xform first", cold and cold[0] == "xform", cold[:4])
+check("H21 Cop seeds present", "flowsolver" in sug.CURATED["Cop"]
+      and "scattershapes" in sug.POPULAR["Cop"])
 cop_cold = engine.suggestions("Cop", "fractalnoise")
 check("curated COP: fractalnoise -> remap", "remap" in cop_cold[:4], cop_cold[:4])
 lop_cold = engine.suggestions("Lop", "sopimport")
@@ -215,7 +252,65 @@ with hou.undos.group("Lightspeed test create"):
     n.moveToGoodPosition()
 check("undo-grouped create+wire works", n.inputs()[0] == box)
 
+# wire insertion: endpoint resolution + the REAL splice path
+from lightspeed.panel import LightspeedPanel, splice_node_into
+
+up_src = geo.createNode("box")
+down_dst = geo.createNode("xform")
+down_dst.setInput(0, up_src)
+conn = down_dst.inputConnections()[0]
+check("NodeConnection has isSelected", hasattr(conn, "isSelected"))
+endpoints = LightspeedPanel._connection_endpoints(conn)
+check("connection endpoints resolved", endpoints is not None)
+if endpoints:
+    up, oi, down, ii = endpoints
+    check("endpoints orientation", up.path() == up_src.path()
+          and down.path() == down_dst.path(),
+          (up.path(), down.path()))
+    spliced = geo.createNode("null")
+    splice_node_into(spliced, endpoints)
+    check("splice rewires chain",
+          down_dst.inputs()[0] == spliced and spliced.inputs()[0] == up_src)
+    mid_y = (up_src.position().y() + down_dst.position().y()) / 2.0
+    check("spliced node placed at wire midpoint",
+          abs(spliced.position().y() - mid_y) < 0.01,
+          (spliced.position(), mid_y))
+
 geo.destroy()
+
+# ---------------------------------------------------------------- presets
+from lightspeed import presets as ls_presets
+
+check("presets: no category -> empty", ls_presets.entries_for_category(None) == [])
+
+sop_cat = hou.nodeTypeCategories()["Sop"]
+gal_path = os.path.join(SANDBOX, "lightspeed.gal")
+if os.path.exists(gal_path):
+    os.remove(gal_path)
+ls_presets._installed = False
+try:
+    pgeo = hou.node("/obj").createNode("geo", "lightspeed_preset_test")
+    noise = pgeo.createNode("attribnoise")
+    entry = ls_presets.capture("gentle drift", noise)
+    check("preset captured", entry is not None and os.path.exists(gal_path))
+    items = ls_presets.entries_for_category(sop_cat)
+    mine = [it for it in items if it.label == "gentle drift"]
+    check("preset listed for Sop", len(mine) == 1,
+          [it.label for it in items][:5])
+    if mine:
+        fresh = pgeo.createNode("attribnoise")
+        check("preset applies to node", ls_presets.apply_to_node(mine[0], fresh))
+    pgeo.destroy()
+except hou.Error:
+    traceback.print_exc()
+    check("preset capture/apply", False)
+
+# ---------------------------------------------------------------- nodegraph hook
+import nodegraphhooks
+
+check("hook ignores non-keyboard events",
+      nodegraphhooks.createEventHandler(object(), []) == (None, False))
+check("hook is off by default", not nodegraphhooks._tab_hook_enabled())
 
 # ---------------------------------------------------------------- UI imports (no display)
 try:
@@ -223,6 +318,24 @@ try:
     check("Qt shim imports (PySide%d)" % lqt.PYSIDE_VERSION, True)
     import lightspeed.panel  # noqa: F401  (module import only; no QDialog instantiation headless)
     check("panel module imports", True)
+
+    # inline-name query parsing (pure logic, no widget needed)
+    parse = lightspeed.panel.LightspeedPanel._parse_query
+    check("parse: 'null OUT_TEXT' names node",
+          parse(None, "null OUT_TEXT") == ("null", "OUT_TEXT"))
+    check("parse: 'cam RENDER_CAM' names node",
+          parse(None, "cam RENDER_CAM") == ("cam", "RENDER_CAM"))
+    check("parse: 'copy points' untouched",
+          parse(None, "copy points") == ("copy points", None))
+    check("parse: 'Copy To Points' untouched",
+          parse(None, "Copy To Points") == ("Copy To Points", None))
+    check("parse: 'convert VDB' untouched (no underscore)",
+          parse(None, "convert VDB") == ("convert VDB", None))
+    check("parse: 'import USD' untouched",
+          parse(None, "import USD") == ("import USD", None))
+    check("parse: single token untouched",
+          parse(None, "OUT_ALL") == ("OUT_ALL", None))
+
     import lightspeed.gallery_ui as gui
     check("gallery_ui compat alias", gui.LightspeedGallery is lightspeed.panel.LightspeedPanel)
     import lightspeed.smart_suggestions as sm
@@ -234,7 +347,7 @@ except Exception:
     check("UI module imports", False)
 
 import lightspeed
-check("package version 2.0.0", lightspeed.__version__ == "2.0.0")
+check("package version 2.1.0", lightspeed.__version__ == "2.1.0")
 
 print()
 if FAILURES:
