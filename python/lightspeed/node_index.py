@@ -185,8 +185,12 @@ def find_network_editor(selection=None):
     if isinstance(under, hou.NetworkEditor):
         return under
 
-    editors = [p for p in hou.ui.paneTabs()
-               if isinstance(p, hou.NetworkEditor) and p.isCurrentTab()]
+    try:
+        editors = [p for p in hou.ui.paneTabs()
+                   if isinstance(p, hou.NetworkEditor) and p.isCurrentTab()]
+    except (AttributeError, hou.Error):
+        # hou.ui doesn't exist headless (hython) — no editors to find
+        return None
     if selection:
         parent_path = selection[0].parent().path()
         for editor in editors:

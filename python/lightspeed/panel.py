@@ -687,7 +687,10 @@ class LightspeedPanel(QtWidgets.QDialog):
             if self.embedded:
                 self.refresh_context()
         # Middle-click a result = create & keep the panel open.
-        if (obj is self.results.viewport()
+        # (getattr: the search bar receives events while _build_ui is still
+        # constructing, before self.results exists.)
+        results = getattr(self, "results", None)
+        if (results is not None and obj is results.viewport()
                 and event.type() == QtCore.QEvent.MouseButtonRelease
                 and event.button() == QtCore.Qt.MiddleButton):
             pos = (event.position().toPoint() if hasattr(event, "position")
@@ -696,7 +699,8 @@ class LightspeedPanel(QtWidgets.QDialog):
             if item is not None and item.data(ROLE_KIND) in CREATABLE_KINDS:
                 self._activate_item(item, keep_open=True)
                 return True
-        if obj is self.search_bar and event.type() == QtCore.QEvent.KeyPress:
+        if (obj is self.search_bar and results is not None
+                and event.type() == QtCore.QEvent.KeyPress):
             key = event.key()
             mods = event.modifiers()
 

@@ -361,6 +361,27 @@ check("hook ignores non-keyboard events",
       nodegraphhooks.createEventHandler(object(), []) == (None, False))
 check("hook is off by default", not nodegraphhooks._tab_hook_enabled())
 
+# ---------------------------------------------------------------- panel construction (offscreen Qt)
+# Constructing the real panel catches GUI-only crashes the logic tests
+# can't see (e.g. event filters firing during _build_ui, before all
+# widgets exist). No display needed: Qt's offscreen platform.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+try:
+    from lightspeed.qt import QtWidgets
+    _app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from lightspeed.panel import LightspeedPanel
+    _panel = LightspeedPanel(embedded=True)
+    check("panel constructs headless", True)
+    _panel.search_bar.setText("box")          # eventFilter + debounce path
+    _panel._update_results("box")             # direct requery path
+    _panel._update_results("")                # browse view path
+    _panel.reject()                           # embedded Esc = clear, not hide
+    check("panel survives query/reject cycle", True)
+    _panel.deleteLater()
+except Exception:
+    traceback.print_exc()
+    check("panel constructs headless", False)
+
 # ---------------------------------------------------------------- UI imports (no display)
 try:
     import lightspeed.qt as lqt
