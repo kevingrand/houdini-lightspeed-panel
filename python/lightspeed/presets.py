@@ -84,21 +84,26 @@ def entries_for_category(category, force=False):
     _ensure_installed()
     items = []
     try:
-        entries = hou.galleries.galleryEntries(category=category)
-    except (AttributeError, TypeError, hou.Error):
+        entries = hou.galleries.galleryEntries()
+    except (AttributeError, hou.Error):
         return []
+    # galleryEntries' `category` kwarg filters by gallery *keyword* category
+    # (a string like "Uncategorized"), not node type category — so we match
+    # each entry's node type names against this category's type table.
+    # (Verified on 21.0.596: nodeTypeNames() returns bare versioned names,
+    # e.g. ('attribnoise::2.0',).)
+    type_table = category.nodeTypes()
     for entry in entries:
         try:
-            type_name = entry.nodeTypeName()
-            if not type_name:
-                continue
-            # nodeTypeName may be table-qualified ("Sop/box") — strip it,
-            # the panel creates inside a known category anyway.
-            if "/" in type_name:
-                type_name = type_name.split("/", 1)[1]
-            label = entry.label() or entry.name()
-            items.append(PresetItem(entry, entry.name(), label, type_name))
-        except hou.Error:
+            for type_name in entry.nodeTypeNames():
+                if "/" in type_name:  # tolerate table-qualified "Sop/box"
+                    type_name = type_name.split("/", 1)[1]
+                if type_name not in type_table:
+                    continue
+                label = entry.label() or entry.name()
+                items.append(PresetItem(entry, entry.name(), label, type_name))
+                break
+        except (AttributeError, hou.Error):
             continue
     items.sort(key=lambda it: it.label.lower())
     _cache[cache_key] = items
