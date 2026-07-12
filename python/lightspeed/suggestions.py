@@ -282,6 +282,20 @@ class SuggestionEngine(object):
         count = _decayed(count, ts, now) + 1.0
         bucket[key] = [count, now]
 
+    def reset(self, category_name=None):
+        """Forget learned history — for one category, or everything when
+        category_name is None. Curated seeds are untouched."""
+        if category_name is None:
+            self._bigrams = {}
+            self._counts = {}
+        else:
+            self._bigrams.pop(category_name, None)
+            self._counts.pop(category_name, None)
+        store.save_json(USAGE_FILE, {
+            "bigrams": self._bigrams,
+            "counts": self._counts,
+        })
+
     # -- queries --------------------------------------------------------
 
     def suggestions(self, category_name, upstream_type_name, limit=10):

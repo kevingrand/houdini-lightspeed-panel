@@ -47,11 +47,14 @@ actually work**.
 - **Cross-context hints** — searching for a node that lives elsewhere
   (e.g. `flow solver` while in SOPs) shows *"Flow Solver — in Copernicus"*
   instead of a dead-end "no matches".
-- **Keyboard-first** — type to search, `↑/↓` to choose, `Enter` to create,
-  **`Ctrl+Enter` to create and keep the panel open** (chain nodes rapidly —
-  each new node becomes the next wiring anchor), **`Ctrl+1…9` to create the
-  Nth result instantly**, `Ctrl+F` to toggle favorite, `F1` for node help,
-  `Ctrl+/` for the shortcut cheat sheet, `Esc` to dismiss.
+- **Keyboard-first** — type to search, `↑/↓`/`Tab` to choose (wraps around),
+  `Enter` to create, **`Ctrl+Enter` or middle-click to create and keep the
+  panel open** (chain nodes rapidly — each new node becomes the next wiring
+  anchor), **`Alt+Enter` to create loose** (no auto-wiring, display flag
+  untouched), **`Ctrl+1…9` to create a numbered result instantly** (the
+  first nine rows show their number), `Ctrl+Home/End` to jump, `Ctrl+F` to
+  toggle favorite, `F1` for node help, `Ctrl+/` for the shortcut cheat
+  sheet, `Esc` clears the query first, then dismisses.
 - **Open with TAB (opt-in)** — flip *"Open Lightspeed with TAB"* in the ⚙
   menu and pressing TAB in any network editor opens Lightspeed instead of
   the native menu (via the documented `nodegraphhooks` mechanism; the hook
@@ -111,7 +114,9 @@ editor that received the keypress wins outright.
 | `lightspeed_settings.json` | panel size, TAB-hook toggle |
 | `lightspeed.gal` | captured presets (standard Houdini gallery file) |
 
-Delete any of them to reset. Nothing ever leaves your machine.
+Delete any of them to reset — or use the ⚙ menu's *Forget Learned
+Suggestions* (per context or everything) without touching files.
+Nothing ever leaves your machine.
 
 ## Tests
 

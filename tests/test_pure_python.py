@@ -99,6 +99,30 @@ check("get_mapped_nodes compat",
       "copytopoints" in aliases.get_mapped_nodes("Cloner"))
 check("C4D_MAPPINGS compat", aliases.C4D_MAPPINGS is aliases.ALIASES)
 
+
+# --- fast path (precomputed entry fields) must score identically ---
+class FastE(object):
+    """Mimics node_index.NodeEntry's precomputed search fields."""
+    def __init__(self, name, label, base=None):
+        self.name, self.label, self.base = name, label, base or name
+        self.name_l = name.lower()
+        self.label_l = label.lower()
+        self.base_l = fuzzy.base_name(self.name_l)
+        self.words = fuzzy.entry_words(self.name_l, self.label_l)
+        self.acr = fuzzy.acronym(self.label_l)
+
+
+FAST_ENTRIES = [FastE(e.name, e.label, e.base) for e in ENTRIES]
+for q in ("box", "ctp", "plybvl", "copy points", "cloner", "att",
+          "colnorm", "no such thing xyz"):
+    hits = aliases.alias_hits_for_query(q)
+    slow = [(r["entry"].name, round(r["score"], 6))
+            for r in fuzzy.rank(ENTRIES, q, alias_hits=hits)]
+    fast = [(r["entry"].name, round(r["score"], 6))
+            for r in fuzzy.rank(FAST_ENTRIES, q, alias_hits=hits)]
+    check("fast path parity for '%s'" % q, slow == fast,
+          {"slow": slow[:4], "fast": fast[:4]})
+
 print()
 if FAILURES:
     print(f"RESULT: {len(FAILURES)} FAILURES: {FAILURES}")

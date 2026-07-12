@@ -26,10 +26,13 @@ EXCLUDED_CATEGORIES = {"Data", "Director", "Manager"}
 
 
 class NodeEntry(object):
-    """One creatable node type. Plain attributes for speed."""
+    """One creatable node type. Plain attributes for speed. The lowercase /
+    tokenized fields are precomputed once at index build so the fuzzy
+    matcher never re-derives them on the per-keystroke path."""
 
     __slots__ = ("name", "label", "base", "category", "icon",
-                 "min_inputs", "max_inputs")
+                 "min_inputs", "max_inputs",
+                 "name_l", "label_l", "base_l", "words", "acr")
 
     def __init__(self, name, label, base, category, icon,
                  min_inputs, max_inputs):
@@ -40,6 +43,12 @@ class NodeEntry(object):
         self.icon = icon            # icon name for hou.qt
         self.min_inputs = min_inputs
         self.max_inputs = max_inputs
+        # Search-time fields (see fuzzy.rank)
+        self.name_l = name.lower()
+        self.label_l = label.lower()
+        self.base_l = fuzzy.base_name(self.name_l)
+        self.words = fuzzy.entry_words(self.name_l, self.label_l)
+        self.acr = fuzzy.acronym(self.label_l)
 
 
 def _version_key(version_string):

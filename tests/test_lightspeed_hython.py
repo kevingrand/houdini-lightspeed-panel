@@ -152,6 +152,35 @@ ranked = fuzzy.rank(idx.entries("Sop"), "no", suggested={"normal"})
 # just ensure no crash and results exist
 check("rank with suggested set works", len(ranked) > 0)
 
+# NodeEntry precomputed search fields exist and agree with fuzzy helpers
+sample = idx.entries("Sop")[0]
+check("entry precomputes lowercase fields",
+      sample.name_l == sample.name.lower()
+      and sample.base_l == fuzzy.base_name(sample.name_l)
+      and sample.acr == fuzzy.acronym(sample.label_l)
+      and sample.words == fuzzy.entry_words(sample.name_l, sample.label_l))
+
+# fast path (precomputed) must equal the string path — real index data
+class _Plain(object):
+    def __init__(self, e):
+        self.name, self.label, self.base = e.name, e.label, e.base
+
+for q in ("box", "att", "plybvl", "copy points", "wrangle"):
+    fast_res = [(r["entry"].name, round(r["score"], 6))
+                for r in fuzzy.rank(idx.entries("Sop"), q)]
+    slow_res = [(r["entry"].name, round(r["score"], 6))
+                for r in fuzzy.rank([_Plain(e) for e in idx.entries("Sop")], q)]
+    check("fast/slow rank parity '%s'" % q, fast_res == slow_res,
+          {"fast": fast_res[:3], "slow": slow_res[:3]})
+
+# per-keystroke ranking stays fast (precomputed fields)
+_t0 = time.perf_counter()
+for _ in range(50):
+    fuzzy.rank(idx.entries("Sop"), "att")
+_per_call_ms = (time.perf_counter() - _t0) / 50 * 1000
+print(f"  rank('att') over {len(idx.entries('Sop'))} SOPs: {_per_call_ms:.2f} ms/call")
+check("rank under 25ms/keystroke", _per_call_ms < 25.0, _per_call_ms)
+
 # ---------------------------------------------------------------- store/suggestions
 # Point pref dir writes at a temp sandbox by monkeypatching store._pref_dir
 from lightspeed import store as ls_store
@@ -194,6 +223,26 @@ check("versioned upstream uses curve seeds", "resample" in ns_sug[:4], ns_sug[:4
 # empty upstream falls back to popular
 none_sug = engine2.suggestions("Sop", None)
 check("no-upstream falls back to frequent/popular", len(none_sug) > 3, none_sug)
+
+# reset: per-category forget drops learned data but keeps curated seeds
+# ("vignette" is deliberately NOT in the curated Cop 'blur' seeds)
+engine2.record_creation("Cop", "blur", "vignette")
+engine2.reset("Sop")
+after = engine2.suggestions("Sop", "box")
+check("reset(Sop) forgets learned scatter", after and after[0] == "xform",
+      after[:4])
+engine3 = sug.SuggestionEngine()
+check("reset persisted to disk",
+      engine3.suggestions("Sop", "box")[0] == "xform")
+check("reset(Sop) spared other categories",
+      engine3.suggestions("Cop", "blur")[0] == "vignette",
+      engine3.suggestions("Cop", "blur")[:3])
+engine3.reset(None)
+engine4 = sug.SuggestionEngine()
+check("reset(None) wipes everything",
+      engine4.suggestions("Cop", "blur")[0] == "sharpen"     # curated again
+      and engine4.frequent("Sop")[0] == sug.POPULAR["Sop"][0],
+      engine4.suggestions("Cop", "blur")[:3])
 
 # ---------------------------------------------------------------- favorites
 fav_path = os.path.join(SANDBOX, "custom_tab_favorites.json")

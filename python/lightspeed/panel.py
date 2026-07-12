@@ -53,6 +53,7 @@ ROLE_ALIAS = QtCore.Qt.UserRole + 3       # alias term or None
 ROLE_SUGGESTED = QtCore.Qt.UserRole + 4   # bool
 ROLE_FAVORITE = QtCore.Qt.UserRole + 5    # bool
 ROLE_PRESET = QtCore.Qt.UserRole + 6      # presets.PresetItem, or None
+ROLE_ORDINAL = QtCore.Qt.UserRole + 7     # 1..9 -> row reachable via Ctrl+N
 
 # Wire-detection is skipped in giant networks: scanning every child's input
 # connections would delay panel-open, and a selected wire there is rare.
@@ -184,7 +185,20 @@ class ResultDelegate(QtWidgets.QStyledItemDelegate):
         is_fav = bool(index.data(ROLE_FAVORITE))
 
         right = rect.right() - 10
+        ordinal = index.data(ROLE_ORDINAL)
+        if ordinal:
+            # Ctrl+1..9 discoverability: a whisper-quiet number at the edge
+            num_font = painter.font()
+            num_font.setPointSizeF(7.0)
+            painter.setFont(num_font)
+            painter.setPen(QtGui.QColor("#e8b48a" if selected else "#565656"))
+            num_rect = QtCore.QRect(right - 10, rect.top(), 10, rect.height())
+            painter.drawText(num_rect, QtCore.Qt.AlignCenter, str(ordinal))
+            right -= 14
         if is_fav:
+            star_font = painter.font()
+            star_font.setPointSizeF(9.0)
+            painter.setFont(star_font)
             painter.setPen(QtGui.QColor("#f0c040" if not selected else "#ffffff"))
             star_rect = QtCore.QRect(right - 12, rect.top(), 12, rect.height())
             painter.drawText(star_rect, QtCore.Qt.AlignCenter, "★")
@@ -574,6 +588,7 @@ class LightspeedPanel(QtWidgets.QDialog):
         self.results.itemDoubleClicked.connect(self._on_result_activated)
         self.results.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.results.customContextMenuRequested.connect(self._result_context_menu)
+        self.results.viewport().installEventFilter(self)  # middle-click create
         layout.addWidget(self.results, 1)
 
         # --- footer: hints + error + size grip ---
@@ -585,7 +600,7 @@ class LightspeedPanel(QtWidgets.QDialog):
         footer.addWidget(self.error_label, 1)
 
         hints = QtWidgets.QLabel(
-            "↵ create    Ctrl+↵ chain    Ctrl+1-9 quick    Ctrl+/ keys")
+            "↵ create    Ctrl+↵ chain    Alt+↵ loose    Ctrl+/ keys")
         hints.setObjectName("hintLabel")
         footer.addWidget(hints)
 
@@ -671,6 +686,16 @@ class LightspeedPanel(QtWidgets.QDialog):
             # whatever network the user is in when they come back.
             if self.embedded:
                 self.refresh_context()
+        # Middle-click a result = create & keep the panel open.
+        if (obj is self.results.viewport()
+                and event.type() == QtCore.QEvent.MouseButtonRelease
+                and event.button() == QtCore.Qt.MiddleButton):
+            pos = (event.position().toPoint() if hasattr(event, "position")
+                   else event.pos())
+            item = self.results.itemAt(pos)
+            if item is not None and item.data(ROLE_KIND) in CREATABLE_KINDS:
+                self._activate_item(item, keep_open=True)
+                return True
         if obj is self.search_bar and event.type() == QtCore.QEvent.KeyPress:
             key = event.key()
             mods = event.modifiers()
@@ -678,18 +703,35 @@ class LightspeedPanel(QtWidgets.QDialog):
             if key in (QtCore.Qt.Key_Down, QtCore.Qt.Key_Up):
                 self._move_selection(1 if key == QtCore.Qt.Key_Down else -1)
                 return True
+            # Tab/Shift+Tab: same as Down/Up — in a search palette nobody
+            # wants focus cycling.
+            if key == QtCore.Qt.Key_Tab:
+                self._move_selection(1)
+                return True
+            if key == QtCore.Qt.Key_Backtab:
+                self._move_selection(-1)
+                return True
             if key == QtCore.Qt.Key_PageDown:
                 self._move_selection(8)
                 return True
             if key == QtCore.Qt.Key_PageUp:
                 self._move_selection(-8)
                 return True
+            # Plain Home/End keep their text-cursor meaning in the field;
+            # Ctrl+Home/End jump the result list.
+            if key == QtCore.Qt.Key_Home and (mods & QtCore.Qt.ControlModifier):
+                self._move_selection_to_edge(first=True)
+                return True
+            if key == QtCore.Qt.Key_End and (mods & QtCore.Qt.ControlModifier):
+                self._move_selection_to_edge(first=False)
+                return True
             if key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
                 self._flush_debounce()
                 keep_open = bool(mods & QtCore.Qt.ControlModifier)
+                wire = not bool(mods & QtCore.Qt.AltModifier)
                 item = self.results.currentItem() or self._first_node_item()
                 if item is not None and item.data(ROLE_KIND) in CREATABLE_KINDS:
-                    self._activate_item(item, keep_open=keep_open)
+                    self._activate_item(item, keep_open=keep_open, wire=wire)
                 return True
             # Ctrl+1..9: create the Nth visible result instantly
             if (mods & QtCore.Qt.ControlModifier
@@ -715,9 +757,9 @@ class LightspeedPanel(QtWidgets.QDialog):
 
     def reject(self):
         """QDialog Esc handling — reached from ANY focused child. Embedded
-        panels must never hide (the pane would go permanently blank):
-        Esc clears the query instead."""
-        if self.embedded:
+        panels must never hide (the pane would go permanently blank), and a
+        popup with a typed query clears it first — second Esc closes."""
+        if self.embedded or self.search_bar.text():
             self.search_bar.clear()
             self.search_bar.setFocus()
             return
@@ -741,14 +783,14 @@ class LightspeedPanel(QtWidgets.QDialog):
         return [i for i in range(self.results.count())
                 if self.results.item(i).data(ROLE_KIND) in CREATABLE_KINDS]
 
-    def _activate_item(self, item, keep_open=False):
+    def _activate_item(self, item, keep_open=False, wire=True):
         """Create from a result row (node or preset). This is the only
         creation path driven by the typed query, so only here does the
         parsed inline name apply — favorite chips and quick actions
         must never inherit it."""
         self.create_node(item.data(ROLE_NAME), keep_open=keep_open,
                          preset_item=item.data(ROLE_PRESET),
-                         node_name=self.pending_name)
+                         node_name=self.pending_name, wire=wire)
 
     def _first_node_item(self):
         for i in range(self.results.count()):
@@ -763,11 +805,23 @@ class LightspeedPanel(QtWidgets.QDialog):
         current = self.results.currentRow()
         if current in rows:
             pos = rows.index(current)
-            pos = max(0, min(len(rows) - 1, pos + delta))
+            if abs(delta) == 1:
+                pos = (pos + delta) % len(rows)   # single steps wrap around
+            else:
+                pos = max(0, min(len(rows) - 1, pos + delta))
         else:
             pos = 0 if delta >= 0 else len(rows) - 1
         self.results.setCurrentRow(rows[pos])
         self.results.scrollToItem(self.results.item(rows[pos]),
+                                  QtWidgets.QAbstractItemView.EnsureVisible)
+
+    def _move_selection_to_edge(self, first):
+        rows = self._creatable_rows()
+        if not rows:
+            return
+        row = rows[0] if first else rows[-1]
+        self.results.setCurrentRow(row)
+        self.results.scrollToItem(self.results.item(row),
                                   QtWidgets.QAbstractItemView.EnsureVisible)
 
     def showEvent(self, event):
@@ -860,6 +914,7 @@ class LightspeedPanel(QtWidgets.QDialog):
 
     def _update_results(self, text):
         self.results.clear()
+        self._clear_error()
         self._fav_cache = self._favorite_names()
         entries = self._entries()
 
@@ -879,6 +934,10 @@ class LightspeedPanel(QtWidgets.QDialog):
         if self.pending_name:
             self.count_label.setText("%s   →  name: %s" % (
                 self.count_label.text(), self.pending_name))
+
+        # Ctrl+1..9 badges on the first nine creatable rows
+        for n, row in enumerate(self._creatable_rows()[:9], start=1):
+            self.results.item(row).setData(ROLE_ORDINAL, n)
 
         first = self._first_node_item()
         if first is not None:
@@ -1110,10 +1169,13 @@ class LightspeedPanel(QtWidgets.QDialog):
         if item.data(ROLE_KIND) in CREATABLE_KINDS:
             mods = QtWidgets.QApplication.keyboardModifiers()
             keep = bool(mods & QtCore.Qt.ControlModifier)
-            self._activate_item(item, keep_open=keep)
+            wire = not bool(mods & QtCore.Qt.AltModifier)
+            self._activate_item(item, keep_open=keep, wire=wire)
 
     def create_node(self, type_name, keep_open=False, preset_item=None,
-                    node_name=None):
+                    node_name=None, wire=True):
+        """wire=False (Alt+Enter) drops the node loose: no auto-wiring, no
+        wire splice, and the display/render flags stay where they are."""
         # A docked panel outlives the context it captured — re-anchor to
         # the network/selection/wire as they are right now.
         if self.embedded:
@@ -1123,13 +1185,14 @@ class LightspeedPanel(QtWidgets.QDialog):
         if self.network_editor is None:
             self._show_error("No network editor found — nowhere to create.")
             return
+        self._clear_error()
 
         entry = self.index.entry(self.category_name, type_name)
         label = entry.label if entry else type_name
         if preset_item is not None:
             label = "%s (%s)" % (preset_item.label, label)
         upstream = self.upstream_type
-        insert_into = self.insert_connection
+        insert_into = self.insert_connection if wire else None
 
         # Resolve the wire BEFORE creating anything: a failure here must
         # not leave an orphaned node behind.
@@ -1148,6 +1211,12 @@ class LightspeedPanel(QtWidgets.QDialog):
                                  "(was it rewired or deleted?)")
                 self.insert_connection = None
                 return
+            # The wire's upstream node is the true "previous node" for the
+            # learning engine — a selected wire means no selected node.
+            try:
+                upstream = endpoints[0].type().name()
+            except hou.Error:
+                pass
 
         preset_ok = True
         try:
@@ -1166,7 +1235,7 @@ class LightspeedPanel(QtWidgets.QDialog):
 
                 if endpoints is not None:
                     splice_node_into(new_node, endpoints)
-                else:
+                elif wire:
                     wired = 0
                     max_in = entry.max_inputs if entry else 9999
                     for i, anchor in enumerate(self.selected_nodes):
@@ -1178,15 +1247,18 @@ class LightspeedPanel(QtWidgets.QDialog):
                         except hou.Error:
                             break
                     self._place_node(new_node, wired)
+                else:
+                    # Loose create (Alt+Enter): drop at the network cursor
+                    self._place_node(new_node, wired=0, prefer_cursor=True)
 
                 new_node.setSelected(True, clear_all_selected=True)
                 try:
                     self.network_editor.setCurrentNode(new_node)
                 except hou.Error:
                     pass
-                # When splicing into a wire, leave the display/render flags
-                # where they are — the user is editing mid-chain.
-                if insert_into is None:
+                # When splicing into a wire — or dropping a loose node —
+                # leave the display/render flags where they are.
+                if insert_into is None and wire:
                     for flag_setter in ("setDisplayFlag", "setRenderFlag"):
                         fn = getattr(new_node, flag_setter, None)
                         if fn is not None:
@@ -1222,6 +1294,7 @@ class LightspeedPanel(QtWidgets.QDialog):
             # Chain mode: the new node becomes the anchor for the next create.
             self.selected_nodes = [new_node]
             self._recompute_suggestions()
+            self._refresh_dynamic_ui()   # keep the "after <node>" badge live
             self.search_bar.clear()
             self._update_results("")
             self.search_bar.setFocus()
@@ -1245,9 +1318,11 @@ class LightspeedPanel(QtWidgets.QDialog):
         except (AttributeError, hou.Error):
             pass
 
-    def _place_node(self, new_node, wired):
+    def _place_node(self, new_node, wired, prefer_cursor=False):
         try:
-            if wired and self.selected_nodes:
+            if prefer_cursor and self.cursor_pos is not None:
+                new_node.setPosition(self.cursor_pos)
+            elif wired and self.selected_nodes:
                 low_y = min(n.position().y() for n in self.selected_nodes)
                 avg_x = (sum(n.position().x() for n in self.selected_nodes)
                          / len(self.selected_nodes))
@@ -1407,10 +1482,44 @@ class LightspeedPanel(QtWidgets.QDialog):
         tab_act.setChecked(bool(self.settings.get("tab_hook")))
         tab_act.toggled.connect(self._set_tab_hook)
         menu.addSeparator()
+        if self.category_name:
+            cat_label = self.category.label() if self.category else self.category_name
+            forget_here = menu.addAction(
+                "Forget Learned Suggestions in %s" % cat_label)
+            forget_here.triggered.connect(
+                lambda: self._forget_learned(self.category_name))
+        forget_all = menu.addAction("Forget All Learned Suggestions…")
+        forget_all.triggered.connect(lambda: self._forget_learned(None))
+        menu.addSeparator()
         keys_act = menu.addAction("Keyboard Shortcuts   (Ctrl+/)")
         keys_act.triggered.connect(self._toggle_cheat_sheet)
         qt.exec_menu(menu, self._gear_btn.mapToGlobal(
             QtCore.QPoint(0, self._gear_btn.height())))
+
+    def _forget_learned(self, category_name):
+        """Reset the usage-learned suggestion data (curated seeds stay)."""
+        if category_name is None:
+            # Wiping every context is the one destructive settings action —
+            # confirm it. Per-context resets are cheap to re-learn.
+            box = QtWidgets.QMessageBox(self)
+            box.setWindowTitle("Lightspeed")
+            box.setText("Forget everything Lightspeed has learned about "
+                        "your node habits, in all contexts?")
+            box.setStandardButtons(QtWidgets.QMessageBox.Yes
+                                   | QtWidgets.QMessageBox.No)
+            box.setDefaultButton(QtWidgets.QMessageBox.No)
+            exec_fn = getattr(box, "exec", None) or box.exec_
+            if exec_fn() != QtWidgets.QMessageBox.Yes:
+                return
+        try:
+            self.engine.reset(category_name)
+        except Exception as exc:
+            traceback.print_exc()
+            self._show_error("Couldn't reset suggestions: %s" % exc)
+            return
+        self._recompute_suggestions()
+        self._update_results(self.search_bar.text())
+        self._flash("Learned suggestions cleared")
 
     def _set_tab_hook(self, enabled):
         self.settings["tab_hook"] = bool(enabled)
@@ -1427,13 +1536,15 @@ class LightspeedPanel(QtWidgets.QDialog):
         "<b>Lightspeed shortcuts</b><br>"
         "<table cellspacing='4'>"
         "<tr><td><code>↵</code></td><td>create highlighted</td></tr>"
-        "<tr><td><code>Ctrl+↵</code></td><td>create &amp; keep open (chain)</td></tr>"
-        "<tr><td><code>Ctrl+1…9</code></td><td>create Nth result</td></tr>"
-        "<tr><td><code>↑ ↓ PgUp PgDn</code></td><td>choose result</td></tr>"
+        "<tr><td><code>Ctrl+↵</code> / middle-click</td><td>create &amp; keep open (chain)</td></tr>"
+        "<tr><td><code>Alt+↵</code></td><td>create loose (no wiring)</td></tr>"
+        "<tr><td><code>Ctrl+1…9</code></td><td>create numbered result</td></tr>"
+        "<tr><td><code>↑ ↓ Tab PgUp PgDn</code></td><td>choose result (wraps)</td></tr>"
+        "<tr><td><code>Ctrl+Home/End</code></td><td>first / last result</td></tr>"
         "<tr><td><code>Ctrl+F</code></td><td>toggle favorite ★</td></tr>"
         "<tr><td><code>F1</code></td><td>node help</td></tr>"
         "<tr><td><code>Ctrl+/</code></td><td>this cheat sheet</td></tr>"
-        "<tr><td><code>Esc</code></td><td>close</td></tr>"
+        "<tr><td><code>Esc</code></td><td>clear query, then close</td></tr>"
         "</table><br>"
         "<b>Tricks</b><br>"
         "• <code>null OUT_TEXT</code> — a trailing token with an "
@@ -1517,6 +1628,13 @@ class LightspeedPanel(QtWidgets.QDialog):
                                     severity=hou.severityType.Warning)
         except (AttributeError, hou.Error):
             pass
+
+    def _clear_error(self):
+        """Errors describe the LAST action — clear on the next query or
+        successful create so a stale message can't outlive its cause."""
+        if self.error_label.isVisible():
+            self.error_label.setText("")
+            self.error_label.setVisible(False)
 
     def _restore_size(self):
         size = self.settings.get("size")

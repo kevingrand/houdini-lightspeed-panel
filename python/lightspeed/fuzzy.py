@@ -71,8 +71,10 @@ def subsequence_positions(query, target):
     return positions, gaps
 
 
-def _score_single(token, name_l, base_l, label_l):
-    """Score one query token against one entry. Returns (score, positions)."""
+def _score_single(token, name_l, base_l, label_l, words, acr):
+    """Score one query token against one entry. Returns (score, positions).
+    `words` (label tokens + name tokens) and `acr` (label acronym) are
+    precomputed per entry — this runs per token per entry per keystroke."""
     # positions refer to indices in the *name* string when applicable
     if token == name_l or token == base_l or token == label_l:
         return 0.0, _substr_positions(name_l, token)
@@ -80,10 +82,9 @@ def _score_single(token, name_l, base_l, label_l):
         return 1.0 + len(name_l) * 0.001, _substr_positions(name_l, token)
     if label_l.startswith(token):
         return 2.0, []
-    for word in tokenize(label_l) + name_l.replace("::", "_").split("_"):
+    for word in words:
         if word and word.startswith(token) and word != label_l:
             return 2.2, _substr_positions(name_l, token)
-    acr = acronym(label_l)
     if acr and acr.startswith(token) and len(token) >= 2:
         return 3.0, []
     idx = name_l.find(token)
@@ -100,6 +101,27 @@ def _score_single(token, name_l, base_l, label_l):
     return None, []
 
 
+def entry_words(name_l, label_l):
+    """The word list _score_single scans for word-boundary prefixes:
+    label tokens followed by name tokens. Precomputable per entry."""
+    return tuple(tokenize(label_l) + name_l.replace("::", "_").split("_"))
+
+
+def _score_tokens(tokens, name_l, base_l, label_l, words, acr):
+    """Score pre-split query tokens against precomputed entry parts."""
+    total = 0.0
+    all_positions = []
+    for token in tokens:
+        s, positions = _score_single(token, name_l, base_l, label_l, words, acr)
+        if s is None:
+            return None, []
+        total += s
+        all_positions.extend(positions)
+    # Slight penalty per extra token keeps single-token exact hits on top
+    total += (len(tokens) - 1) * 0.1
+    return total, sorted(set(all_positions))
+
+
 def _substr_positions(name_l, token):
     idx = name_l.find(token)
     if idx < 0:
@@ -111,26 +133,17 @@ def score(query, name, label):
     """
     Score a (possibly multi-word) query against a node name + label.
     Returns (score, name_highlight_positions) or (None, []) when no match.
-    """
-    name_l = name.lower()
-    base_l = base_name(name_l)
-    label_l = label.lower()
 
+    Convenience wrapper that derives everything from the raw strings; the
+    hot per-keystroke path in rank() uses precomputed entry fields instead.
+    """
     tokens = query.lower().split()
     if not tokens:
         return 0.0, []
-
-    total = 0.0
-    all_positions = []
-    for token in tokens:
-        s, positions = _score_single(token, name_l, base_l, label_l)
-        if s is None:
-            return None, []
-        total += s
-        all_positions.extend(positions)
-    # Slight penalty per extra token keeps single-token exact hits on top
-    total += (len(tokens) - 1) * 0.1
-    return total, sorted(set(all_positions))
+    name_l = name.lower()
+    label_l = label.lower()
+    return _score_tokens(tokens, name_l, base_name(name_l), label_l,
+                         entry_words(name_l, label_l), acronym(label_l))
 
 
 # Score assigned per alias-match tier (see aliases.AliasHit). An exact alias
@@ -171,11 +184,23 @@ def rank(entries, query, alias_hits=None, suggested=(), favorites=(), limit=60):
     alias_hits = _alias_lookup(alias_hits) if alias_hits else {}
     suggested = set(suggested)
     favorites = set(favorites)
-    query = query.strip()
+    tokens = query.strip().lower().split()
 
     results = []
     for entry in entries:
-        s, positions = score(query, entry.name, entry.label)
+        # NodeIndex entries carry precomputed lowercase/token fields;
+        # duck-typed entries (tests, presets) fall back to deriving them.
+        name_l = getattr(entry, "name_l", None)
+        if name_l is not None:
+            s, positions = (0.0, []) if not tokens else _score_tokens(
+                tokens, name_l, entry.base_l, entry.label_l,
+                entry.words, entry.acr)
+        else:
+            nl = entry.name.lower()
+            ll = entry.label.lower()
+            s, positions = (0.0, []) if not tokens else _score_tokens(
+                tokens, nl, base_name(nl), ll,
+                entry_words(nl, ll), acronym(ll))
         hit = None
         if alias_hits:
             hit = (alias_hits.get(entry.base.lower())
