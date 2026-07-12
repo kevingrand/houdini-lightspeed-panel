@@ -67,6 +67,11 @@ PRESET_COLOR = "#7ec98f"    # preset green
 # Rows the keyboard/mouse can create
 CREATABLE_KINDS = ("node", "preset")
 
+# Favorites chip grid (uniform cells: predictable drag-snap + clean rows)
+FAV_GRID_W = 74
+FAV_GRID_H = 46
+FAV_MAX_ROWS = 2
+
 # Trailing query token that names the new node: "null OUT_TEXT".
 # The token must contain an underscore — search vocabulary like
 # "convert VDB" or "import USD" must never be eaten as a name.
@@ -628,12 +633,20 @@ class LightspeedPanel(QtWidgets.QDialog):
 
             self.fav_list = QtWidgets.QListWidget()
             self.fav_list.setViewMode(QtWidgets.QListWidget.IconMode)
+            self.fav_list.setFlow(QtWidgets.QListView.LeftToRight)
+            self.fav_list.setWrapping(True)
             self.fav_list.setResizeMode(QtWidgets.QListWidget.Adjust)
             self.fav_list.setMovement(QtWidgets.QListView.Snap)
             self.fav_list.setWordWrap(False)
-            self.fav_list.setSpacing(3)
-            self.fav_list.setFixedHeight(58)
+            self.fav_list.setSpacing(2)
             self.fav_list.setIconSize(QtCore.QSize(24, 24))
+            # Uniform cells: chips land on a predictable grid when dragged
+            # and rows stay aligned no matter how long the labels are.
+            self.fav_list.setGridSize(QtCore.QSize(FAV_GRID_W, FAV_GRID_H))
+            self.fav_list.setHorizontalScrollBarPolicy(
+                QtCore.Qt.ScrollBarAlwaysOff)   # wrap instead — never pan
+            self.fav_list.setVerticalScrollBarPolicy(
+                QtCore.Qt.ScrollBarAsNeeded)
             self.fav_list.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
             self.fav_list.setDefaultDropAction(QtCore.Qt.MoveAction)
             self.fav_list.itemClicked.connect(self._on_favorite_clicked)
@@ -1137,19 +1150,47 @@ class LightspeedPanel(QtWidgets.QDialog):
     # ------------------------------------------------------------------
 
     def _populate_favorites(self):
-        if self.fav_list is None or not self.category_name:
+        if self.fav_list is None:
             return
         self.fav_list.clear()
-        for name in self.fav_manager.get_favorites(self.category_name):
+        names = (self.fav_manager.get_favorites(self.category_name)
+                 if self.category_name else [])
+        fm = QtGui.QFontMetrics(self.fav_list.font())
+        for name in names:
             entry = self.index.entry(self.category_name, name)
             label = entry.label if entry else name
-            display = label if len(label) <= 14 else label[:13] + "…"
+            display = fm.elidedText(label, QtCore.Qt.ElideRight, FAV_GRID_W - 6)
             icon = get_icon(entry.icon) if entry else QtGui.QIcon()
             item = QtWidgets.QListWidgetItem(icon, display)
             item.setData(ROLE_NAME, entry.name if entry else name)
             item.setToolTip("%s  (%s)\nClick to create • right-click to remove"
                             % (label, name))
             self.fav_list.addItem(item)
+        if not names:
+            hint = QtWidgets.QListWidgetItem(
+                "right-click a result to add favorites")
+            hint.setFlags(QtCore.Qt.NoItemFlags)
+            self.fav_list.addItem(hint)
+        self._sync_favorites_height()
+
+    def _sync_favorites_height(self):
+        """Fit the chip area to its content: one row when it fits, up to
+        FAV_MAX_ROWS before scrolling vertically (never horizontally)."""
+        if self.fav_list is None:
+            return
+        count = max(1, self.fav_list.count())
+        width = self.fav_list.viewport().width()
+        if width < FAV_GRID_W:            # not laid out yet — estimate
+            width = max(self.width() - 40, FAV_GRID_W)
+        per_row = max(1, width // (FAV_GRID_W + 2))
+        rows = min(FAV_MAX_ROWS, (count + per_row - 1) // per_row)
+        self.fav_list.setFixedHeight(rows * (FAV_GRID_H + 2) + 6)
+
+    def resizeEvent(self, event):
+        super(LightspeedPanel, self).resizeEvent(event)
+        # Chips-per-row changes with width; keep the row count honest
+        if getattr(self, "fav_list", None) is not None:
+            self._sync_favorites_height()
 
     def _on_favorite_clicked(self, item):
         name = item.data(ROLE_NAME)
@@ -1165,6 +1206,9 @@ class LightspeedPanel(QtWidgets.QDialog):
             if name:
                 order.append(name)
         self.fav_manager.update_favorites_order(self.category_name, order)
+        # Icon-mode drops leave the dragged chip wherever it landed;
+        # rebuild once the drop finishes so the grid is clean again.
+        QtCore.QTimer.singleShot(0, self._populate_favorites)
 
     def _toggle_favorite(self, name):
         if not self.category_name:
