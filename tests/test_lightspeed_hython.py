@@ -325,6 +325,91 @@ if endpoints:
           abs(spliced.position().y() - mid_y) < 0.01,
           (spliced.position(), mid_y))
 
+# chain insertion: create-after-selected steals the downstream wires
+from lightspeed.panel import steal_downstream, place_between
+
+# the reported scenario: box -> xform -> null, select xform, create
+cbox = geo.createNode("box")
+cxf = geo.createNode("xform")
+cnull = geo.createNode("null")
+cxf.setInput(0, cbox)
+cnull.setInput(0, cxf)
+cbox.setPosition(hou.Vector2(0, 0))
+cxf.setPosition(hou.Vector2(0, -2))
+cnull.setPosition(hou.Vector2(0, -6))
+cnew = geo.createNode("polybevel")
+cnew.setInput(0, cxf)
+stolen = steal_downstream(cxf, cnew)
+check("insert-after steals downstream", stolen == [cnull],
+      [n.name() for n in stolen])
+check("downstream now fed by new node", cnull.inputs()[0] == cnew)
+check("new node still fed by selected", cnew.inputs()[0] == cxf)
+place_between(cnew, cxf, stolen)
+check("inserted node placed at chain midpoint",
+      abs(cnew.position().y() - (-4.0)) < 0.01, cnew.position())
+check("roomy downstream not nudged",
+      abs(cnull.position().y() - (-6.0)) < 0.01, cnull.position())
+
+# cramped chain: downstream too close -> gets nudged down to make room
+tbox = geo.createNode("xform")
+tnull = geo.createNode("null")
+tnull.setInput(0, tbox)
+tbox.setPosition(hou.Vector2(5, 0))
+tnull.setPosition(hou.Vector2(5, -1))
+tnew = geo.createNode("mountain")
+tnew.setInput(0, tbox)
+place_between(tnew, tbox, steal_downstream(tbox, tnew))
+check("cramped downstream nudged down",
+      tnull.position().y() <= tnew.position().y() - 0.99,
+      (tnew.position(), tnull.position()))
+
+# input INDEX preserved: a boolean fed on input 1 stays on input 1
+b_a = geo.createNode("box")
+b_b = geo.createNode("sphere")
+b_bool = geo.createNode("boolean")
+b_bool.setInput(0, b_a)
+b_bool.setInput(1, b_b)
+b_new = geo.createNode("xform")
+b_new.setInput(0, b_b)
+steal_downstream(b_b, b_new)
+check("stolen wire keeps downstream input index",
+      b_bool.inputs()[1] == b_new and b_bool.inputs()[0] == b_a,
+      [i.name() if i else None for i in b_bool.inputs()])
+
+# fan-out: every downstream of the selected node is rewired
+f_src = geo.createNode("grid")
+f_d1 = geo.createNode("xform")
+f_d2 = geo.createNode("mountain")
+f_d1.setInput(0, f_src)
+f_d2.setInput(0, f_src)
+f_new = geo.createNode("smooth")
+f_new.setInput(0, f_src)
+f_stolen = steal_downstream(f_src, f_new)
+check("fan-out fully rewired", len(f_stolen) == 2
+      and f_d1.inputs()[0] == f_new and f_d2.inputs()[0] == f_new,
+      [n.name() for n in f_stolen])
+
+# multi-output selected node: only output 0's wires move
+s_src = geo.createNode("split")
+s_m = geo.createNode("null")     # fed from output 0 (matched)
+s_u = geo.createNode("null")     # fed from output 1 (unmatched)
+s_m.setInput(0, s_src, 0)
+s_u.setInput(0, s_src, 1)
+s_new = geo.createNode("xform")
+s_new.setInput(0, s_src)
+s_stolen = steal_downstream(s_src, s_new)
+check("multi-output: only output-0 wires stolen",
+      s_stolen == [s_m] and s_m.inputs()[0] == s_new,
+      [n.name() for n in s_stolen])
+check("multi-output: other output untouched",
+      s_u.inputConnections()[0].inputNode() == s_src
+      and s_u.inputConnections()[0].outputIndex() == 1)
+
+# index knows output counts (create_node's pass-through guard)
+check("entry max_outputs recorded",
+      idx.entry("Sop", "xform").max_outputs >= 1
+      and isinstance(idx.entry("Sop", "box").max_outputs, int))
+
 geo.destroy()
 
 # ---------------------------------------------------------------- presets

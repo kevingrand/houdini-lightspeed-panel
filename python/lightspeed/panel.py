@@ -92,6 +92,69 @@ def get_icon(icon_name):
     return icon
 
 
+def steal_downstream(sel_node, new_node, out_idx=0):
+    """
+    Chain insertion: rewire everything `sel_node` feeds FROM output
+    `out_idx` so it is fed by `new_node` instead — the new node slots into
+    the chain rather than dangling off it as a branch.
+
+    Only connections from `out_idx` move (a multi-output node like Split
+    keeps its other output wires). Each downstream keeps its exact input
+    index, so a Boolean fed on input 1 stays fed on input 1. Returns the
+    list of rewired downstream nodes. Module-level so the headless test
+    suite exercises the real rewiring path.
+    """
+    try:
+        conns = sel_node.outputConnections()
+    except hou.Error:
+        return []
+    # Snapshot before rewiring — setInput invalidates connection objects.
+    targets = []
+    for conn in conns:
+        try:
+            if conn.outputIndex() != out_idx:
+                continue
+            down = conn.outputNode()
+            if down is None or down == new_node:
+                continue
+            targets.append((down, conn.inputIndex()))
+        except (AttributeError, hou.Error):
+            continue
+    stolen = []
+    for down, in_idx in targets:
+        try:
+            down.setInput(in_idx, new_node, 0)
+            stolen.append(down)
+        except hou.Error:
+            continue   # incompatible port: that wire stays on the old node
+    return stolen
+
+
+def place_between(new_node, up_node, down_nodes):
+    """Position new_node between up_node and the nodes it now feeds, and
+    nudge any downstream node sitting too close down to keep the chain
+    readable."""
+    try:
+        up = up_node.position()
+        if not down_nodes:
+            new_node.setPosition(up + hou.Vector2(0, -1.2))
+            return
+        avg = hou.Vector2(0, 0)
+        for d in down_nodes:
+            avg += d.position()
+        avg = avg / len(down_nodes)
+        mid = (up + avg) / 2.0
+        new_node.setPosition(mid)
+        for d in down_nodes:
+            if mid.y() - d.position().y() < 0.9:
+                d.setPosition(hou.Vector2(d.position().x(), mid.y() - 1.0))
+    except hou.Error:
+        try:
+            new_node.moveToGoodPosition()
+        except hou.Error:
+            pass
+
+
 def splice_node_into(new_node, endpoints):
     """Insert new_node into an existing wire:
     upstream ──▶ new_node ──▶ downstream, placed at the wire midpoint.
@@ -1223,6 +1286,7 @@ class LightspeedPanel(QtWidgets.QDialog):
                 pass
 
         preset_ok = True
+        stolen = []
         try:
             with hou.undos.group("Lightspeed: create %s" % label):
                 parent = self.network_editor.pwd()
@@ -1250,7 +1314,18 @@ class LightspeedPanel(QtWidgets.QDialog):
                             wired += 1
                         except hou.Error:
                             break
-                    self._place_node(new_node, wired)
+                    # Chain insertion: a single selected node with nodes
+                    # after it means "put the new node BETWEEN them", not
+                    # "branch off". Needs the new node to pass data through
+                    # (an output and the wiring above succeeded).
+                    if (wired == 1 and len(self.selected_nodes) == 1
+                            and (entry is None or entry.max_outputs != 0)):
+                        stolen = steal_downstream(
+                            self.selected_nodes[0], new_node)
+                    if stolen:
+                        place_between(new_node, self.selected_nodes[0], stolen)
+                    else:
+                        self._place_node(new_node, wired)
                 else:
                     # Loose create (Alt+Enter): drop at the network cursor
                     self._place_node(new_node, wired=0, prefer_cursor=True)
@@ -1260,9 +1335,10 @@ class LightspeedPanel(QtWidgets.QDialog):
                     self.network_editor.setCurrentNode(new_node)
                 except hou.Error:
                     pass
-                # When splicing into a wire — or dropping a loose node —
-                # leave the display/render flags where they are.
-                if insert_into is None and wire:
+                # When splicing into a wire, inserting mid-chain, or
+                # dropping a loose node, leave the display/render flags
+                # where they are.
+                if insert_into is None and wire and not stolen:
                     for flag_setter in ("setDisplayFlag", "setRenderFlag"):
                         fn = getattr(new_node, flag_setter, None)
                         if fn is not None:
@@ -1290,8 +1366,10 @@ class LightspeedPanel(QtWidgets.QDialog):
         except Exception:
             traceback.print_exc()
 
-        flash = "%s inserted" % label if endpoints is not None \
-            else "%s created" % label
+        if endpoints is not None or stolen:
+            flash = "%s inserted" % label
+        else:
+            flash = "%s created" % label
         self._flash(flash)
 
         if keep_open or self.embedded:
@@ -1553,6 +1631,8 @@ class LightspeedPanel(QtWidgets.QDialog):
         "<b>Tricks</b><br>"
         "• <code>null OUT_TEXT</code> — a trailing token with an "
         "underscore names the node<br>"
+        "• create after a mid-chain node — it's inserted INTO the chain "
+        "(downstream rewired); <code>Alt+↵</code> if you wanted it loose<br>"
         "• select a wire first — the new node is spliced into it<br>"
         "• search in C4D/AE/Blender/Maya words: <i>cloner, wiggle, "
         "turbosmooth…</i><br>"

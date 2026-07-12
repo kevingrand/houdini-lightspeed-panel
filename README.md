@@ -26,8 +26,16 @@ actually work**.
   labeled with `≈ term`. When the [MOPs](https://www.motionoperators.com/)
   toolkit is installed, C4D terms also resolve to MOPs tools (`cloner` →
   *MOPs Instancer*, `random effector` → *MOPs Randomize*).
-- **Wire insertion** — select a wire, open the panel, create: the node is
-  **spliced into that connection** (upstream → new → downstream) at the
+- **Chain insertion** — create with a **mid-chain node selected** and the
+  new node is inserted INTO the chain: everything the selected node fed is
+  rewired to come from the new node instead of branching off sideways.
+  Downstream input indices are preserved (a Boolean fed on input 1 stays
+  on input 1), multi-output nodes only hand over the wires of the output
+  being extended, the new node sits at the chain midpoint, and cramped
+  downstream nodes get nudged down to make room. Want a branch instead?
+  `Alt+Enter` creates loose.
+- **Wire insertion** — or select a wire, open the panel, create: the node
+  is **spliced into that connection** (upstream → new → downstream) at the
   wire's midpoint, as a single undo. The header shows
   `insert: a → b` so you always know the mode.
 - **Presets** — gallery-backed parameter presets ("recipes") appear as

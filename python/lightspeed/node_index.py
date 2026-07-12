@@ -31,11 +31,11 @@ class NodeEntry(object):
     matcher never re-derives them on the per-keystroke path."""
 
     __slots__ = ("name", "label", "base", "category", "icon",
-                 "min_inputs", "max_inputs",
+                 "min_inputs", "max_inputs", "max_outputs",
                  "name_l", "label_l", "base_l", "words", "acr")
 
     def __init__(self, name, label, base, category, icon,
-                 min_inputs, max_inputs):
+                 min_inputs, max_inputs, max_outputs=1):
         self.name = name            # full type name used for createNode()
         self.label = label          # human label shown in the TAB menu
         self.base = base            # namespace/version-stripped core name
@@ -43,6 +43,7 @@ class NodeEntry(object):
         self.icon = icon            # icon name for hou.qt
         self.min_inputs = min_inputs
         self.max_inputs = max_inputs
+        self.max_outputs = max_outputs
         # Search-time fields (see fuzzy.rank)
         self.name_l = name.lower()
         self.label_l = label.lower()
@@ -92,6 +93,7 @@ def _build_category(category):
                 icon=node_type.icon(),
                 min_inputs=node_type.minNumInputs(),
                 max_inputs=node_type.maxNumInputs(),
+                max_outputs=node_type.maxNumOutputs(),
             ))
         except hou.Error:
             continue
