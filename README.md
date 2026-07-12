@@ -77,17 +77,41 @@ actually work**.
 
 ## Install
 
-1. Clone/copy this folder anywhere.
-2. In Houdini: right-click the shelf → **New Tool…**, paste the contents of
-   [launcher.py](launcher.py) into the *Script* tab (it adds `python/` to
-   `sys.path`, hot-reloads the package, and opens the panel).
-3. Optionally bind the tool to a hotkey (Edit → Hotkeys, e.g. `Shift+C`)
+**Recommended — Houdini package (auto-loads everything).** Clone/copy this
+folder anywhere, then save this as
+`$HOUDINI_USER_PREF_DIR/packages/lightspeed.json` (e.g.
+`~/houdini21.0/packages/`), adjusting the path:
+
+```json
+{
+    "env": [
+        { "LIGHTSPEED": "E:/DEV LOCAL/Houdini Lightspeed Panel" },
+        { "HOUDINI_PATH": { "value": "$LIGHTSPEED/houdini", "method": "append" } },
+        { "HOUDINI_PYTHONPATH": { "value": "$LIGHTSPEED/python", "method": "append" } },
+        { "HOUDINI_PYTHON_PANEL_PATH": { "value": "$LIGHTSPEED/python_panels", "method": "append" } }
+    ]
+}
+```
+
+Restart Houdini. The `lightspeed` package and the TAB hook are importable
+from startup (via `houdini/python3.11libs/pythonrc.py`), and the
+*Lightspeed* pane tab appears under **pane-tab menu → Misc**. To open the
+popup, make a shelf tool (step 2 below) or enable the TAB hook from the ⚙
+menu.
+
+**Shelf tool / hotkey (the popup).**
+
+1. In Houdini: right-click the shelf → **New Tool…**, paste the contents of
+   [launcher.py](launcher.py) into the *Script* tab (it also hot-reloads
+   the package after you pull updates, and works without the package
+   install by adding `python/` to `sys.path` itself).
+2. Optionally bind the tool to a hotkey (Edit → Hotkeys, e.g. `Shift+C`)
    and press it with the mouse over a Network Editor — or just enable
    *"Open Lightspeed with TAB"* in the panel's ⚙ menu.
-4. Optional dockable pane: **Windows → Python Panel Editor → File → Load
-   File…** and pick `python_panels/lightspeed.pypanel` (or copy it into
-   `$HOUDINI_USER_PREF_DIR/python_panels/`), then add a *Lightspeed* pane
-   tab via the pane-tab menu.
+3. Without the package install, the dockable pane needs a manual step:
+   **Windows → Python Panel Editor → File → Load File…** and pick
+   `python_panels/lightspeed.pypanel`, then add a *Lightspeed* pane tab via
+   the pane-tab menu.
 
 > The TAB hook is loaded when the shelf tool runs (once per session) and
 > does nothing unless the ⚙ toggle is on. `Shift+Tab`-opened menus and
